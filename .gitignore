@@ -1,0 +1,41 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python (backend, worker)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node (frontend)
+node_modules/
+dist/
+.vite/
+*.local
+*.tsbuildinfo
+coverage/
+
+# Editors / OS / local tooling
+.claude/
+.vscode/
+.idea/
+
+# Local working notes and design docs — not part of the repo
+Handoff files/
+handoff/
+notes/
+*.local.md
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts
+*.log
+/tmp/
+repos/          # cloned repos under scan
+reports/        # generated PDF reports
