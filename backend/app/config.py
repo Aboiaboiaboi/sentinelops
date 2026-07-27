@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_name: str = "SentinelOps"
     environment: Literal["development", "production"] = "development"
     debug: bool = False
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
 
 @lru_cache

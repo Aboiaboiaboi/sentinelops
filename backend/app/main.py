@@ -1,8 +1,13 @@
 from fastapi import FastAPI
 
 from app.config import get_settings
+from app.logging import configure_logging
 
 settings = get_settings()
+
+# Before the app is constructed, so anything FastAPI or uvicorn logs during
+# startup is already going through the JSON handler.
+configure_logging(settings.log_level)
 
 # Routes are mounted at the root, not under /api. The frontend's dev server
 # proxies /api here and strips that prefix before forwarding, so the backend
