@@ -1,0 +1,27 @@
+[project]
+name = "sentinelops-backend"
+version = "0.1.0"
+description = "SentinelOps production-readiness assessment API"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pydantic-settings>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+]
+
+# This is an application, not a distributable library — there is nothing to build
+# or install, so uv should not look for a build backend.
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
