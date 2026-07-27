@@ -1,0 +1,56 @@
+# Local development infrastructure.
+#
+# Only the stateful services live here for now — the API runs on the host against
+# them, which keeps the edit/reload loop fast. The backend and worker get their
+# own services here once there is a Dockerfile to build.
+#
+# Credentials below are development defaults and are meant to be boring. Nothing
+# in this file is used for a deployed environment.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: sentinelops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sentinelops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinelops}
+      POSTGRES_DB: ${POSTGRES_DB:-sentinelops}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # -U and -d are both load-bearing. Bare `pg_isready` checks as the root OS
+      # user against a same-named database, so it reports ready during the window
+      # where the server is up but the application role and database do not exist
+      # yet — exactly the window a migration would run in and fail.
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-sentinelops} -d ${POSTGRES_DB:-sentinelops}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: sentinelops-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      # Redis's default save points are active in this image, so queued jobs
+      # survive a restart. Not critical in dev, but it costs nothing and makes
+      # local behaviour match the deployed queue.
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
