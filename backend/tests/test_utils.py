@@ -1,0 +1,121 @@
+"""Tests for the two cloud-portability boundaries.
+
+The path-traversal cases matter beyond the abstraction itself: storage keys will
+be built from scan ids, and this is the one place a filesystem path is derived
+from data.
+"""
+
+from pathlib import Path
+
+import pytest
+
+from app.utils.queue import InMemoryQueue, Queue, get_queue, set_queue
+from app.utils.storage import LocalStorage, Storage, UnsafeStorageKey
+
+
+class TestInMemoryQueue:
+    async def test_publish_records_the_job(self) -> None:
+        queue = InMemoryQueue()
+
+        await queue.publish("run_scan", scan_id="abc")
+
+        assert queue.published == [("run_scan", {"scan_id": "abc"})]
+
+    async def test_publish_returns_an_opaque_id(self) -> None:
+        queue = InMemoryQueue()
+
+        first = await queue.publish("run_scan", scan_id="abc")
+        second = await queue.publish("run_scan", scan_id="abc")
+
+        assert first != second
+
+    async def test_clear_empties_the_record(self) -> None:
+        queue = InMemoryQueue()
+        await queue.publish("run_scan", scan_id="abc")
+
+        queue.clear()
+
+        assert queue.published == []
+
+    def test_satisfies_the_protocol(self) -> None:
+        """The Protocol is what services/ depends on — a replacement backend
+        only has to match this."""
+        assert isinstance(InMemoryQueue(), Queue)
+
+    def test_the_queue_is_swappable(self) -> None:
+        original = get_queue()
+        replacement = InMemoryQueue()
+        try:
+            set_queue(replacement)
+            assert get_queue() is replacement
+        finally:
+            set_queue(original)
+
+
+class TestLocalStorage:
+    async def test_upload_writes_the_content(self, tmp_path: Path) -> None:
+        storage = LocalStorage(tmp_path)
+
+        location = await storage.upload("report.pdf", b"%PDF-1.7", content_type="application/pdf")
+
+        assert Path(location).read_bytes() == b"%PDF-1.7"
+
+    async def test_upload_creates_missing_directories(self, tmp_path: Path) -> None:
+        storage = LocalStorage(tmp_path)
+
+        location = await storage.upload(
+            "scans/abc/report.pdf", b"data", content_type="application/pdf"
+        )
+
+        assert Path(location).exists()
+
+    async def test_upload_overwrites(self, tmp_path: Path) -> None:
+        storage = LocalStorage(tmp_path)
+        await storage.upload("report.pdf", b"old", content_type="application/pdf")
+
+        location = await storage.upload("report.pdf", b"new", content_type="application/pdf")
+
+        assert Path(location).read_bytes() == b"new"
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "../escaped.pdf",
+            "../../etc/passwd",
+            "scans/../../escaped.pdf",
+        ],
+    )
+    async def test_rejects_keys_that_escape_the_root(self, tmp_path: Path, key: str) -> None:
+        storage = LocalStorage(tmp_path / "root")
+
+        with pytest.raises(UnsafeStorageKey):
+            await storage.upload(key, b"data", content_type="application/pdf")
+
+    async def test_rejects_an_absolute_key(self, tmp_path: Path) -> None:
+        """Path joining silently discards the root when the second operand is
+        absolute, so this would otherwise write anywhere on disk."""
+        storage = LocalStorage(tmp_path)
+
+        with pytest.raises(UnsafeStorageKey):
+            await storage.upload(
+                str(tmp_path / "elsewhere.pdf"), b"data", content_type="application/pdf"
+            )
+
+    async def test_nothing_is_written_when_a_key_is_rejected(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        storage = LocalStorage(root)
+
+        with pytest.raises(UnsafeStorageKey):
+            await storage.upload("../escaped.pdf", b"data", content_type="application/pdf")
+
+        assert not (tmp_path / "escaped.pdf").exists()
+
+    async def test_allows_nested_keys_inside_the_root(self, tmp_path: Path) -> None:
+        storage = LocalStorage(tmp_path)
+
+        location = await storage.upload("a/b/c/report.pdf", b"data", content_type="application/pdf")
+
+        assert Path(location).is_relative_to(tmp_path.resolve())
+
+    def test_satisfies_the_protocol(self, tmp_path: Path) -> None:
+        assert isinstance(LocalStorage(tmp_path), Storage)

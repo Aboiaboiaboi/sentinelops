@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import model_validator
@@ -35,6 +36,10 @@ class Settings(BaseSettings):
     # .env at all. The +asyncpg driver is not optional — SQLAlchemy picks the
     # sync driver without it and every await fails at runtime.
     database_url: str = "postgresql+asyncpg://sentinelops:sentinelops@localhost:5432/sentinelops"
+
+    # Where generated reports are written in development. Gitignored, and
+    # replaced by a bucket once there is somewhere to deploy to.
+    storage_dir: Path = Path("reports")
 
     # Only consulted when the browser talks to the API cross-origin. Local dev
     # goes through the frontend's /api proxy, which is same-origin, so CORS never

@@ -35,7 +35,14 @@ notes/
 Thumbs.db
 
 # Runtime artifacts
+# Note: gitignore has no inline comments — a '#' only starts one at the
+# beginning of a line, so a trailing comment becomes part of the pattern and
+# silently matches nothing.
 *.log
 /tmp/
-repos/          # cloned repos under scan
-reports/        # generated PDF reports
+
+# Repositories cloned for scanning — untrusted third-party code
+repos/
+
+# Generated PDF reports
+reports/
