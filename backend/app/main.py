@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, projects
+from app.api import auth, findings, projects, scans
 from app.config import get_settings
 from app.logging import configure_logging
 
@@ -34,6 +34,8 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(projects.router)
+app.include_router(scans.router)
+app.include_router(findings.router)
 
 
 @app.get("/health")

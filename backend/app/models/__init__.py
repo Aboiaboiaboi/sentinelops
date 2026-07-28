@@ -7,10 +7,11 @@ the live database — a model it never imported looks like a table it should dro
 
 from app.models.finding import Finding, Severity
 from app.models.project import Project
-from app.models.scan import CategoryStatus, Scan, ScanStatus
+from app.models.scan import SCAN_CATEGORIES, CategoryStatus, Scan, ScanStatus
 from app.models.user import User
 
 __all__ = [
+    "SCAN_CATEGORIES",
     "CategoryStatus",
     "Finding",
     "Project",

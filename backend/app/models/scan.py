@@ -33,6 +33,21 @@ class CategoryStatus(enum.StrEnum):
     PENDING = "pending"
 
 
+# The categories a scan reports on. Each runs independently, so a scan carries a
+# status per category rather than one overall outcome.
+#
+# Not a database enum: these are the keys of a JSONB map, and adding a category
+# should not need a migration.
+SCAN_CATEGORIES: tuple[str, ...] = (
+    "architecture",
+    "security",
+    "deployment",
+    "reliability",
+    "observability",
+    "scalability",
+)
+
+
 # SQLAlchemy stores an Enum column by member NAME by default, which would write
 # "PENDING" where the API contract requires "pending". values_callable forces it
 # to persist the value instead, so what is in the column is what goes on the wire.
