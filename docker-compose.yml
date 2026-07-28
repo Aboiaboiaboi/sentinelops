@@ -80,14 +80,20 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    volumes:
+      # Generated reports survive a container rebuild. Mounted at /data, which
+      # the image creates for the app user — /app itself is root-owned and not
+      # writable by the process.
+      - backend_data:/data
     environment:
       DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@postgres:5432/sentinelops
-      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+    # No REDIS_URL and no dependency on redis: the API does not talk to it yet.
+    # Settings ignores unknown variables, so declaring one before anything reads
+    # it produces config that looks wired and is not — worse than absent. Both
+    # come back with the worker that actually consumes the queue.
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       migrate:
         # Start only once migrations have finished and exited zero. A failed
@@ -98,3 +104,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  backend_data:

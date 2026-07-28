@@ -53,7 +53,11 @@ WORKDIR /app
 
 # Only the virtualenv crosses the stage boundary. uv, the build cache, and the
 # compilers are all left behind in the builder.
-COPY --from=builder --chown=app:app /app/.venv /app/.venv
+#
+# Copied as root, deliberately. The app user needs to read and execute this, not
+# write it — leaving the code owned by the account that runs it would let anyone
+# who compromises the process rewrite the application and survive a restart.
+COPY --from=builder /app/.venv /app/.venv
 
 # Putting the venv's bin directory first means `uvicorn` and `alembic` resolve
 # to it without activating anything — activation is a shell concept and there is
@@ -62,10 +66,18 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
 # Application code last: it changes on every commit, so it sits in the final
-# layer where a rebuild is cheapest.
-COPY --chown=app:app alembic.ini ./
-COPY --chown=app:app alembic ./alembic
-COPY --chown=app:app app ./app
+# layer where a rebuild is cheapest. Root-owned for the same reason as the venv.
+COPY alembic.ini ./
+COPY alembic ./alembic
+COPY app ./app
+
+# Everything the process writes at runtime lives here, outside the code tree.
+# WORKDIR creates /app as root, so an unprivileged process cannot mkdir inside
+# it — reports would fail with EACCES the first time one was generated. Giving
+# writes their own directory fixes that and keeps /app read-only to the app,
+# which is the stronger arrangement anyway.
+RUN mkdir -p /data && chown app:app /data
+ENV STORAGE_DIR=/data/reports
 
 USER app
 

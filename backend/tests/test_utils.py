@@ -5,6 +5,7 @@ be built from scan ids, and this is the one place a filesystem path is derived
 from data.
 """
 
+import os.path
 from pathlib import Path
 
 import pytest
@@ -116,6 +117,23 @@ class TestLocalStorage:
         location = await storage.upload("a/b/c/report.pdf", b"data", content_type="application/pdf")
 
         assert Path(location).is_relative_to(tmp_path.resolve())
+
+    async def test_uploads_where_isreserved_does_not_exist(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulates Linux, where posixpath has no isreserved at all.
+
+        This suite runs on Windows, where os.path.isreserved exists — so an
+        unguarded call passes here and raises AttributeError in the container,
+        which is the only place the code actually runs. Removing the attribute
+        reproduces the deployment platform on the development one.
+        """
+        monkeypatch.delattr(os.path, "isreserved", raising=False)
+        storage = LocalStorage(tmp_path)
+
+        location = await storage.upload("report.pdf", b"data", content_type="application/pdf")
+
+        assert Path(location).read_bytes() == b"data"
 
     def test_satisfies_the_protocol(self, tmp_path: Path) -> None:
         assert isinstance(LocalStorage(tmp_path), Storage)

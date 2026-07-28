@@ -19,6 +19,18 @@ class UnsafeStorageKey(ValueError):
     """Raised for a key that would write outside the storage root."""
 
 
+def _is_reserved_name(key: str) -> bool:
+    """Whether the key names a Windows device (NUL, COM1, ...).
+
+    os.path.isreserved is Windows-only — posixpath does not define it at all, so
+    calling it unguarded raises AttributeError on Linux. That is invisible when
+    developing on Windows and fails in the container, which is the only place it
+    matters, so the lookup is done once here rather than at each call site.
+    """
+    isreserved = getattr(os.path, "isreserved", None)
+    return isreserved is not None and isreserved(key)
+
+
 @runtime_checkable
 class Storage(Protocol):
     async def upload(self, key: str, content: bytes, *, content_type: str) -> str:
@@ -49,9 +61,9 @@ class LocalStorage:
         if candidate.is_absolute() or candidate.drive:
             raise UnsafeStorageKey(f"Storage key must be a relative path: {key!r}")
         # Windows device names such as NUL or COM1 resolve inside the root but
-        # do not behave like files. os.path.isreserved returns False everywhere
-        # else, so this costs nothing on Linux.
-        if os.path.isreserved(key):
+        # do not behave like files. Meaningless on Linux, where the helper
+        # reports False.
+        if _is_reserved_name(key):
             raise UnsafeStorageKey(f"Storage key is a reserved device name: {key!r}")
 
         destination = (self._root / candidate).resolve()
