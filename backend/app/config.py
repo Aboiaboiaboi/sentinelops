@@ -36,11 +36,28 @@ class Settings(BaseSettings):
     # sync driver without it and every await fails at runtime.
     database_url: str = "postgresql+asyncpg://sentinelops:sentinelops@localhost:5432/sentinelops"
 
+    # Only consulted when the browser talks to the API cross-origin. Local dev
+    # goes through the frontend's /api proxy, which is same-origin, so CORS never
+    # enters the picture there. A wildcard is not an option: the spec sends
+    # credentials, and browsers reject "*" alongside them.
+    cors_origins: list[str] = ["http://localhost:5173"]
+
     secret_key: str = DEV_SECRET_KEY
     jwt_algorithm: str = "HS256"
     # Seven days. There is no refresh-token flow and no session endpoint, so a
     # short expiry would log people out mid-scan with no way to renew quietly.
     access_token_expire_minutes: int = 60 * 24 * 7
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Whether the auth cookie is restricted to HTTPS.
+
+        Derived rather than configured. A Secure cookie is dropped by the browser
+        over plain http, so hardcoding it on would make local login silently fail
+        to persist; hardcoding it off would ship an auth cookie over HTTP in
+        production. Tying it to the environment is correct in both cases.
+        """
+        return self.environment == "production"
 
     @model_validator(mode="after")
     def _validate_production_secret(self) -> "Settings":

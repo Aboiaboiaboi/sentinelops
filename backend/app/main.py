@@ -1,5 +1,7 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import auth
 from app.config import get_settings
 from app.logging import configure_logging
 
@@ -17,6 +19,20 @@ app = FastAPI(
     version="0.1.0",
     debug=settings.debug,
 )
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    # Required for the auth cookie to cross origins at all. Note that browsers
+    # reject allow_credentials alongside a "*" origin, which is why cors_origins
+    # is an explicit list rather than a wildcard.
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
 
 
 @app.get("/health")

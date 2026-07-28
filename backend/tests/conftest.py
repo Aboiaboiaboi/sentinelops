@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 import app.models  # noqa: F401  — registers every table on Base.metadata
+from app.api.deps import get_db
 from app.config import get_settings
 from app.database.base import Base
 from app.main import app as fastapi_app
@@ -96,12 +97,21 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
+async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
     """HTTP client that talks to the app in-process, with no socket involved.
 
-    The database dependency override arrives with api/deps.py — until then this
-    only exercises routes that touch no database.
+    get_db is overridden to hand out the test's session, so requests made through
+    this client write inside the same transaction the fixture rolls back — and a
+    test can inspect the session directly to see what a request did.
     """
+
+    async def override_get_db() -> AsyncIterator[AsyncSession]:
+        yield session
+
+    fastapi_app.dependency_overrides[get_db] = override_get_db
     transport = ASGITransport(app=fastapi_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
-        yield http_client
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+            yield http_client
+    finally:
+        fastapi_app.dependency_overrides.clear()
