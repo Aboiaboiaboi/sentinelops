@@ -1,0 +1,30 @@
+# Everything here is excluded from the build context — the tarball Docker sends
+# to the daemon before it even reads the Dockerfile. Excluding a path here also
+# means a later `COPY . .` cannot accidentally pull it into the image.
+
+# The host virtualenv is the important one: it holds Windows binaries that would
+# be useless (and confusing) inside a Linux container, and it is large enough to
+# slow every build down noticeably.
+.venv/
+venv/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Real secrets. .env.example is deliberately not excluded — it documents the
+# shape of the config and contains no credentials.
+.env
+.env.*
+!.env.example
+
+# Test suite: it never runs inside the production image, and leaving it out
+# keeps the image smaller and its attack surface narrower.
+tests/
+
+# Runtime output, generated inside the container rather than baked in.
+reports/
+repos/
+*.log

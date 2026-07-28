@@ -51,6 +51,50 @@ services:
       timeout: 3s
       retries: 10
 
+  # Migrations run as their own short-lived service rather than from the API's
+  # entrypoint. An entrypoint that migrates works until there are two API
+  # replicas, at which point both race to apply the same revision on every
+  # deploy. A separate one-shot job runs exactly once and the API waits for it
+  # to exit successfully.
+  migrate:
+    build: ./backend
+    container_name: sentinelops-migrate
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      # Not localhost. Inside the compose network each service is reachable by
+      # its service name, and "localhost" would mean this container itself.
+      # This is the single most common thing to get wrong when moving an app
+      # that worked on the host into a container.
+      DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@postgres:5432/sentinelops
+    depends_on:
+      postgres:
+        # Waits for the healthcheck to pass, not merely for the container to
+        # start. Without the condition, Postgres accepting connections and
+        # Postgres being ready are two different moments and the migration
+        # loses the race.
+        condition: service_healthy
+
+  backend:
+    build: ./backend
+    container_name: sentinelops-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@postgres:5432/sentinelops
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        # Start only once migrations have finished and exited zero. A failed
+        # migration therefore stops the API from coming up at all, instead of
+        # serving requests against a schema it does not match.
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
   redis_data:
