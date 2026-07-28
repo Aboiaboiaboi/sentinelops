@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -16,45 +17,76 @@ from app.config import DEV_SECRET_KEY, MIN_SECRET_KEY_BYTES, Settings, get_setti
 
 
 class TestPasswordHashing:
-    def test_correct_password_verifies(self) -> None:
-        assert verify_password("correct horse battery", hash_password("correct horse battery"))
+    async def test_correct_password_verifies(self) -> None:
+        stored = await hash_password("correct horse battery")
 
-    def test_wrong_password_does_not_verify(self) -> None:
-        assert not verify_password("wrong", hash_password("correct horse battery"))
+        assert await verify_password("correct horse battery", stored)
 
-    def test_hash_is_not_the_password(self) -> None:
+    async def test_wrong_password_does_not_verify(self) -> None:
+        stored = await hash_password("correct horse battery")
+
+        assert not await verify_password("wrong", stored)
+
+    async def test_hash_is_not_the_password(self) -> None:
         password = "correct horse battery"
 
-        assert hash_password(password) != password
+        assert await hash_password(password) != password
 
-    def test_same_password_hashes_differently_each_time(self) -> None:
+    async def test_same_password_hashes_differently_each_time(self) -> None:
         """Distinct salts. Identical hashes would reveal which users share a
         password just by reading the table."""
         password = "correct horse battery"
 
-        assert hash_password(password) != hash_password(password)
+        assert await hash_password(password) != await hash_password(password)
 
-    def test_password_at_the_byte_limit_is_accepted(self) -> None:
-        assert verify_password("a" * MAX_PASSWORD_BYTES, hash_password("a" * MAX_PASSWORD_BYTES))
+    async def test_password_at_the_byte_limit_is_accepted(self) -> None:
+        password = "a" * MAX_PASSWORD_BYTES
 
-    def test_password_over_the_byte_limit_is_rejected(self) -> None:
+        assert await verify_password(password, await hash_password(password))
+
+    async def test_password_over_the_byte_limit_is_rejected(self) -> None:
         with pytest.raises(PasswordTooLongError):
-            hash_password("a" * (MAX_PASSWORD_BYTES + 1))
+            await hash_password("a" * (MAX_PASSWORD_BYTES + 1))
 
-    def test_limit_counts_bytes_not_characters(self) -> None:
+    async def test_limit_counts_bytes_not_characters(self) -> None:
         """An emoji is four bytes, so this is 20 characters but 80 bytes. Counting
         characters here would let it through and crash inside bcrypt instead."""
         password = "😀" * 20
 
         assert len(password) < MAX_PASSWORD_BYTES
         with pytest.raises(PasswordTooLongError):
-            hash_password(password)
+            await hash_password(password)
 
-    def test_verifying_an_over_long_password_is_false_not_an_error(self) -> None:
-        assert not verify_password("a" * 200, hash_password("short"))
+    async def test_verifying_an_over_long_password_is_false_not_an_error(self) -> None:
+        assert not await verify_password("a" * 200, await hash_password("short"))
 
-    def test_verifying_against_a_corrupt_hash_is_false_not_an_error(self) -> None:
-        assert not verify_password("anything", "not-a-bcrypt-hash")
+    async def test_verifying_against_a_corrupt_hash_is_false_not_an_error(self) -> None:
+        assert not await verify_password("anything", "not-a-bcrypt-hash")
+
+    async def test_hashing_does_not_block_the_event_loop(self) -> None:
+        """The reason these are async at all.
+
+        bcrypt costs ~200ms of CPU. Called directly from a coroutine it stalls
+        every other request the worker is serving, not just its own — measured
+        at 3ms to 1561ms for an unrelated endpoint under ten concurrent logins.
+        Running it in a thread means the loop stays free to make progress.
+        """
+        ticks = 0
+
+        async def count_ticks() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.005)
+                ticks += 1
+
+        ticker = asyncio.create_task(count_ticks())
+        try:
+            await hash_password("correct horse battery")
+        finally:
+            ticker.cancel()
+
+        # A blocked loop would leave this at zero: the ticker never gets to run.
+        assert ticks > 0
 
 
 class TestAccessTokens:

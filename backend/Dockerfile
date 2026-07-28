@@ -98,4 +98,17 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 # Exec form (a JSON array) rather than a shell string, so uvicorn runs as PID 1
 # and receives SIGTERM directly. Wrapped in a shell it would not, and every stop
 # would wait out the ten-second timeout before being killed.
+#
+# DEPLOYMENT NOTE — rate limiting buckets by client IP, and behind a load
+# balancer every request arrives from the balancer. Uvicorn only rewrites the
+# client address from X-Forwarded-For for peers listed in FORWARDED_ALLOW_IPS,
+# which defaults to 127.0.0.1 — so without setting it, all traffic shares one
+# bucket and the auth limit applies to the whole world at once. Set it to the
+# balancer's address at deploy time:
+#     FORWARDED_ALLOW_IPS=<load balancer address or range>
+# Do not set it to "*" on a publicly reachable service: uvicorn would then trust
+# an attacker-supplied X-Forwarded-For, and rotating that header bypasses the
+# limit entirely. This is why the limiter reads request.client rather than the
+# header itself — trusting forwarded headers is a deployment decision, not an
+# application one.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

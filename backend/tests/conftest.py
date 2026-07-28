@@ -23,6 +23,20 @@ from app.api.deps import get_db
 from app.config import get_settings
 from app.database.base import Base
 from app.main import app as fastapi_app
+from app.rate_limit import limiter
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter() -> None:
+    """Clear rate-limit counters before every test.
+
+    The limiter keys by client IP and every test client presents the same one,
+    so without this the suite would share one budget and tests would start
+    failing based on how many ran before them. Resetting rather than disabling
+    keeps the limiter in the request path for all tests, so a decorator that
+    broke a route would still be caught.
+    """
+    limiter.reset()
 
 
 def _database_urls() -> tuple[URL, URL]:

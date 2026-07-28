@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
 from app.api import auth, findings, projects, scans
 from app.config import get_settings
 from app.logging import configure_logging
+from app.rate_limit import limiter, rate_limit_exceeded_handler
 
 settings = get_settings()
 
@@ -20,6 +22,11 @@ app = FastAPI(
     debug=settings.debug,
 )
 
+
+# slowapi reaches the limiter through app.state, so the decorators on the auth
+# routes cannot work without this assignment.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

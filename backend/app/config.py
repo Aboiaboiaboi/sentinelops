@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     # credentials, and browsers reject "*" alongside them.
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # Rate limiting. Only the auth endpoints are limited — see rate_limit.py for
+    # why there is deliberately no global default.
+    rate_limit_enabled: bool = True
+    # in-process counters by default, so local dev needs no broker. A deployment
+    # running more than one replica must point this at Redis, otherwise each
+    # replica enforces the limit separately and the real ceiling is N times what
+    # was configured.
+    rate_limit_storage_uri: str = "memory://"
+    login_rate_limit: str = "10/minute"
+    signup_rate_limit: str = "5/minute"
+
     secret_key: str = DEV_SECRET_KEY
     jwt_algorithm: str = "HS256"
     # Seven days. There is no refresh-token flow and no session endpoint, so a
