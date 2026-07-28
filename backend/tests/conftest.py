@@ -115,3 +115,17 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             yield http_client
     finally:
         fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def authed_client(client: AsyncClient) -> AsyncClient:
+    """A client that has signed up, so its cookie jar holds a valid auth cookie.
+
+    Signup rather than login because it is one request instead of two and leaves
+    the same state.
+    """
+    await client.post(
+        "/auth/signup",
+        json={"email": "owner@example.com", "password": "correct horse battery"},
+    )
+    return client
