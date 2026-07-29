@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     # limiter would take a different one if it ever moves off memory://.
     redis_url: str = "redis://localhost:6379/0"
 
+    # Where repositories are cloned before scanning. Gitignored. Each scan gets
+    # a disposable subdirectory that is removed whether or not it succeeded.
+    clone_root: Path = Path("repos")
+    # These bound what an arbitrary user-submitted repository can cost us. The
+    # timeout is the effective limit on download size, since the byte cap can
+    # only be enforced once the clone has finished.
+    clone_timeout_seconds: int = 120
+    clone_max_bytes: int = 500_000_000
+    clone_max_files: int = 50_000
+
     # Only consulted when the browser talks to the API cross-origin. Local dev
     # goes through the frontend's /api proxy, which is same-origin, so CORS never
     # enters the picture there. A wildcard is not an option: the spec sends

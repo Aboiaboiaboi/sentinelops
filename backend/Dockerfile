@@ -140,6 +140,11 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
+# Clones land under /data, which the runtime stage created for the app user.
+# /app is root-owned and not writable by the process — deliberately, so that
+# untrusted repository content can never be written next to application code.
+ENV CLONE_ROOT=/data/repos
+
 USER app
 
 # The worker serves no HTTP, so there is nothing to curl. arq's own check reads
