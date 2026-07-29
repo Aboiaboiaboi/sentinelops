@@ -1,3 +1,8 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -6,12 +11,30 @@ from app.api import auth, findings, projects, scans
 from app.config import get_settings
 from app.logging import configure_logging
 from app.rate_limit import limiter, rate_limit_exceeded_handler
+from app.utils.queue import ArqQueue, set_queue
 
 settings = get_settings()
 
 # Before the app is constructed, so anything FastAPI or uvicorn logs during
 # startup is already going through the JSON handler.
 configure_logging(settings.log_level)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Connect the real queue while the app is serving.
+
+    Tests never reach this: httpx's ASGITransport does not run lifespan events,
+    so the suite keeps the in-memory queue and needs no Redis. Which also means
+    a broken Redis connection shows up when the app boots, not in CI.
+    """
+    pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    set_queue(ArqQueue(pool))
+    try:
+        yield
+    finally:
+        await pool.aclose()
+
 
 # Routes are mounted at the root, not under /api. The frontend's dev server
 # proxies /api here and strips that prefix before forwarding, so the backend
@@ -20,6 +43,7 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     debug=settings.debug,
+    lifespan=lifespan,
 )
 
 

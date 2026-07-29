@@ -57,7 +57,12 @@ services:
   # deploy. A separate one-shot job runs exactly once and the API waits for it
   # to exit successfully.
   migrate:
-    build: ./backend
+    build:
+      context: ./backend
+      # Every service names its target explicitly. Without one, Docker builds
+      # the LAST stage in the file — so adding the worker stage would silently
+      # have shipped git into the API and migration images too.
+      target: api
     container_name: sentinelops-migrate
     command: ["alembic", "upgrade", "head"]
     environment:
@@ -75,7 +80,9 @@ services:
         condition: service_healthy
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      target: api
     container_name: sentinelops-backend
     restart: unless-stopped
     ports:
@@ -87,13 +94,13 @@ services:
       - backend_data:/data
     environment:
       DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@postgres:5432/sentinelops
+      # The API publishes scan jobs here; it never consumes them.
+      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
-    # No REDIS_URL and no dependency on redis: the API does not talk to it yet.
-    # Settings ignores unknown variables, so declaring one before anything reads
-    # it produces config that looks wired and is not — worse than absent. Both
-    # come back with the worker that actually consumes the queue.
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       migrate:
         # Start only once migrations have finished and exited zero. A failed
@@ -101,7 +108,31 @@ services:
         # serving requests against a schema it does not match.
         condition: service_completed_successfully
 
+  worker:
+    build:
+      context: ./backend
+      target: worker
+    container_name: sentinelops-worker
+    restart: unless-stopped
+    volumes:
+      - worker_data:/data
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@postgres:5432/sentinelops
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    # No ports. The worker pulls jobs off Redis rather than accepting requests,
+    # so it needs no inbound path at all — which is also why Cloud Run Worker
+    # Pools exist rather than forcing this shape into a request/response service.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
   redis_data:
   backend_data:
+  worker_data:

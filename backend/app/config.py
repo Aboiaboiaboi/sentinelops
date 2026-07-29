@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # replaced by a bucket once there is somewhere to deploy to.
     storage_dir: Path = Path("reports")
 
+    # Job queue. Matches docker-compose.yml; database 0 is arq's, and the rate
+    # limiter would take a different one if it ever moves off memory://.
+    redis_url: str = "redis://localhost:6379/0"
+
     # Only consulted when the browser talks to the API cross-origin. Local dev
     # goes through the frontend's /api proxy, which is same-origin, so CORS never
     # enters the picture there. A wildcard is not an option: the spec sends

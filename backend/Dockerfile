@@ -41,7 +41,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------------------
 # Stage 2: runtime — only what is needed to serve requests.
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim
+# Stage 2: runtime — everything the API and the worker have in common.
+#
+# Deliberately does NOT set USER. The two images that build on it need different
+# privileges during their own setup: the worker installs a package and has to be
+# root to do it. Each of them drops to the app user as its last step.
+# ---------------------------------------------------------------------------
+FROM python:3.14-slim AS runtime
 
 # A container process defaults to root. If an attacker escapes the application,
 # root inside the container is a far better starting position than an
@@ -79,6 +85,12 @@ COPY app ./app
 RUN mkdir -p /data && chown app:app /data
 ENV STORAGE_DIR=/data/reports
 
+
+# ---------------------------------------------------------------------------
+# Stage 3a: api — serves HTTP. No git, because it never clones anything.
+# ---------------------------------------------------------------------------
+FROM runtime AS api
+
 USER app
 
 EXPOSE 8000
@@ -112,3 +124,31 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 # header itself — trusting forwarded headers is a deployment decision, not an
 # application one.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+# ---------------------------------------------------------------------------
+# Stage 3b: worker — consumes scan jobs. Needs git; the API does not.
+#
+# Keeping them as separate targets off one base means the API image carries no
+# git binary. That is not about image size: git is the tool this system points
+# at attacker-supplied URLs, and an image that cannot clone cannot be made to.
+# ---------------------------------------------------------------------------
+FROM runtime AS worker
+
+# Still root here — the runtime stage deliberately left the user unset.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+USER app
+
+# The worker serves no HTTP, so there is nothing to curl. arq's own check reads
+# the health key it writes to Redis, which reports whether the worker is
+# actually consuming rather than merely running.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["arq", "--check", "app.workers.settings.WorkerSettings"]
+
+# Our own entrypoint rather than the `arq` CLI. The CLI applies its logging
+# config after importing settings, so its startup banner escapes as plain text
+# into an otherwise JSON stream. See app/workers/main.py.
+CMD ["python", "-m", "app.workers.main"]

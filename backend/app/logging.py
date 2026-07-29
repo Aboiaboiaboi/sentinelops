@@ -105,10 +105,15 @@ class AccessLogFilter(logging.Filter):
 def configure_logging(level: str = "INFO") -> None:
     """Route every logger through one JSON handler on stdout.
 
-    Called from app startup. Uvicorn configures its own loggers before importing
-    the app, so this runs afterwards and deliberately replaces that setup —
-    otherwise uvicorn's handlers and this one both fire and every line is logged
-    twice, once as text and once as JSON.
+    Called at startup, after uvicorn or arq have already configured logging for
+    themselves. Both install their own text handlers, and a library handler left
+    in place fires alongside this one — every line then appears twice, once as
+    JSON and once as text, which makes the output unparseable as a whole.
+
+    Every existing logger is stripped rather than a hardcoded list of library
+    names: the previous version named only uvicorn's loggers, and arq's
+    duplicate text output went unnoticed until the worker ran. Clearing whatever
+    is actually there does not need updating for the next dependency.
     """
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
@@ -117,9 +122,16 @@ def configure_logging(level: str = "INFO") -> None:
     root.handlers = [handler]
     root.setLevel(level.upper())
 
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        logger = logging.getLogger(name)
+    for logger in logging.root.manager.loggerDict.values():
+        # loggerDict holds PlaceHolder entries for namespaces that exist only as
+        # a parent of a real logger; those have no handlers to clear.
+        if not isinstance(logger, logging.Logger):
+            continue
         logger.handlers = []
         logger.propagate = True
 
-    logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
+    # Outside the loop and unconditional: getLogger creates the access logger if
+    # uvicorn has not yet, so the filter is attached whether or not it was
+    # present above. Replacing the filter list keeps a second call idempotent.
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.filters = [AccessLogFilter()]
