@@ -12,10 +12,11 @@ functions with no request in scope.
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import Text, cast, func, select, update
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import SCAN_CATEGORIES, CategoryStatus, Finding, Project, Scan, User
+from app.models import SCAN_CATEGORIES, CategoryStatus, Finding, Project, Scan, ScanStatus, User
 
 
 def initial_category_status() -> dict[str, str]:
@@ -76,6 +77,102 @@ async def get_scan(db: AsyncSession, *, owner: User, scan_id: uuid.UUID) -> Scan
         .join(Project, Scan.project_id == Project.id)
         .where(Scan.id == scan_id, Project.user_id == owner.id)
     )
+
+
+# ---------------------------------------------------------------------------
+# Progress. These four functions are the ONLY place a scan's status, score,
+# scoring_version or category_status may be written.
+#
+# Concentrating the writes here is what keeps a later change — caching scan
+# status in Redis so the polling endpoint stops hitting Postgres — a change in
+# one file rather than surgery across the worker.
+#
+# None of them take an owner: by the time a worker is running a scan, ownership
+# was already proved when the scan was created. They are not reachable from a
+# route.
+# ---------------------------------------------------------------------------
+
+
+async def claim_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> bool:
+    """Move a scan from pending to running, returning whether this caller won.
+
+    The status check is part of the UPDATE rather than a read followed by a
+    write. Postgres evaluates it while holding the row lock, so of two workers
+    racing on the same job exactly one matches a `pending` row and the other
+    matches nothing. Reading first and writing second would let both see
+    `pending` and both proceed to scan the same repository.
+    """
+    result = await db.execute(
+        update(Scan)
+        .where(Scan.id == scan_id, Scan.status == ScanStatus.PENDING)
+        .values(status=ScanStatus.RUNNING)
+    )
+    await db.commit()
+    return result.rowcount == 1
+
+
+async def record_category_result(
+    db: AsyncSession, *, scan_id: uuid.UUID, category: str, status: CategoryStatus
+) -> None:
+    """Set one category's outcome without disturbing the others.
+
+    Uses Postgres `jsonb_set` rather than loading the map, changing a key and
+    writing it back. The six categories run in parallel, so two finishing at
+    once would both read the same snapshot and the second write would silently
+    discard the first one's result. `jsonb_set` applies to whatever is in the
+    column at the moment the statement runs, so concurrent updates to different
+    keys both survive.
+    """
+    if category not in SCAN_CATEGORIES:
+        raise ValueError(f"Unknown scanner category: {category!r}")
+
+    await db.execute(
+        update(Scan)
+        .where(Scan.id == scan_id)
+        .values(
+            category_status=func.jsonb_set(
+                Scan.category_status,
+                array([category], type_=Text),
+                func.to_jsonb(cast(status.value, Text)),
+            )
+        )
+    )
+    await db.commit()
+
+
+async def complete_scan(
+    db: AsyncSession, *, scan_id: uuid.UUID, score: int, scoring_version: str
+) -> bool:
+    """Finish a scan, returning whether it was still running.
+
+    Guarded on `running` so a duplicate delivery cannot overwrite a scan that
+    already finished, and cannot resurrect one that failed.
+    """
+    result = await db.execute(
+        update(Scan)
+        .where(Scan.id == scan_id, Scan.status == ScanStatus.RUNNING)
+        .values(status=ScanStatus.COMPLETED, score=score, scoring_version=scoring_version)
+    )
+    await db.commit()
+    return result.rowcount == 1
+
+
+async def fail_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> bool:
+    """Mark a scan failed, returning whether it was still in flight.
+
+    Accepts `pending` as well as `running`: a job can die between being queued
+    and being claimed, and that scan should not poll forever.
+
+    `score` is deliberately left null. A failed scan has no score, and writing a
+    zero would be indistinguishable from a genuinely terrible repository.
+    """
+    result = await db.execute(
+        update(Scan)
+        .where(Scan.id == scan_id, Scan.status.in_((ScanStatus.PENDING, ScanStatus.RUNNING)))
+        .values(status=ScanStatus.FAILED)
+    )
+    await db.commit()
+    return result.rowcount == 1
 
 
 async def list_findings(
