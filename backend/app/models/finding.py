@@ -1,4 +1,3 @@
-import enum
 import uuid
 
 from sqlalchemy import Enum, ForeignKey, Integer, String, Text, Uuid
@@ -6,19 +5,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
 
+# Defined in the scanner boundary and re-exported here, so that importing a
+# scanner does not pull SQLAlchemy in with it. Severity is a property of what a
+# scanner produces; the database is one of the places it ends up.
+from app.scanners.base import Severity
 
-class Severity(enum.StrEnum):
-    """Finding severity.
-
-    Uppercase on the wire — the only enum in the contract that is. The frontend
-    uses these strings directly as lookup keys for badge styling, so the casing
-    is load-bearing rather than cosmetic.
-    """
-
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-    CRITICAL = "CRITICAL"
+__all__ = ["Finding", "Severity"]
 
 
 _severity_enum = Enum(
