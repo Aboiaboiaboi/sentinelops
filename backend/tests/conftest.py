@@ -5,7 +5,7 @@ native enums, and ON DELETE CASCADE — none of which SQLite reproduces, so a
 SQLite suite would pass while the real database rejected the same code.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.database.base import Base
 from app.main import app as fastapi_app
 from app.rate_limit import limiter
+from app.utils.queue import InMemoryQueue, get_queue, set_queue
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +130,22 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
             yield http_client
     finally:
         fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def queue() -> Iterator[InMemoryQueue]:
+    """A clean queue per test, restored afterwards.
+
+    The module-level queue is a process-wide singleton, so without this a test
+    asserting on published jobs would see whatever earlier tests enqueued.
+    """
+    previous = get_queue()
+    replacement = InMemoryQueue()
+    set_queue(replacement)
+    try:
+        yield replacement
+    finally:
+        set_queue(previous)
 
 
 @pytest.fixture

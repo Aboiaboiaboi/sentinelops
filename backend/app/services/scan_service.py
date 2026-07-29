@@ -9,6 +9,7 @@ into a 404. Nothing here raises HTTP errors, so the worker can call the same
 functions with no request in scope.
 """
 
+import logging
 import uuid
 from collections.abc import Sequence
 
@@ -17,6 +18,9 @@ from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import SCAN_CATEGORIES, CategoryStatus, Finding, Project, Scan, ScanStatus, User
+from app.utils.queue import get_queue
+
+logger = logging.getLogger(__name__)
 
 
 def initial_category_status() -> dict[str, str]:
@@ -35,13 +39,24 @@ async def _owned_project(db: AsyncSession, *, owner: User, project_id: uuid.UUID
     )
 
 
-async def create_scan(db: AsyncSession, *, owner: User, project_id: uuid.UUID) -> Scan | None:
-    """Queue a scan and return immediately.
+SCAN_TASK = "run_scan"
 
-    The row is created `pending` and nothing runs inline — the endpoint must
-    answer in milliseconds regardless of how long a scan takes. Handing the job
-    to a worker arrives with the scanning engine; until then the scan stays
-    pending, which the client already renders and polls correctly.
+
+def scan_job_id(scan_id: uuid.UUID) -> str:
+    """Derive the queue's deduplication key from the scan itself.
+
+    A retried publish, or a user double-clicking Run scan, then lands on an id
+    that is already queued and arq declines the second one instead of running
+    the same repository twice.
+    """
+    return f"scan:{scan_id}"
+
+
+async def create_scan(db: AsyncSession, *, owner: User, project_id: uuid.UUID) -> Scan | None:
+    """Create a pending scan and hand the work to a worker.
+
+    Nothing runs inline — the endpoint answers in milliseconds regardless of how
+    long a scan takes.
     """
     project = await _owned_project(db, owner=owner, project_id=project_id)
     if project is None:
@@ -50,6 +65,21 @@ async def create_scan(db: AsyncSession, *, owner: User, project_id: uuid.UUID) -
     scan = Scan(project_id=project.id, category_status=initial_category_status())
     db.add(scan)
     await db.commit()
+
+    # Publishing after the commit is deliberate. A worker can start the instant
+    # the job lands, and if it were published first it could look the scan up
+    # before this transaction was visible and find nothing.
+    try:
+        await get_queue().publish(SCAN_TASK, scan_id=str(scan.id), _job_id=scan_job_id(scan.id))
+    except Exception:
+        # The row is already committed, so an unqueued scan would otherwise sit
+        # pending forever with the client politely polling it. Marking it failed
+        # says so, and re-raising tells the caller the system is degraded rather
+        # than handing back a scan that will never run.
+        logger.exception("failed to queue scan", extra={"scan_id": str(scan.id)})
+        await fail_scan(db, scan_id=scan.id)
+        raise
+
     return scan
 
 
