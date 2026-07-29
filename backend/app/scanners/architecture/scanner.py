@@ -15,7 +15,7 @@ costs more than no README, because it should.
 from collections import Counter
 from pathlib import Path
 
-from app.scanners.base import ScanFinding, Severity, is_source_file, iter_files, read_text
+from app.scanners.base import RepositoryIndex, ScanFinding, Severity
 
 CATEGORY = "architecture"
 
@@ -67,24 +67,16 @@ def _is_test_path(path: Path, root: Path) -> bool:
 class ArchitectureScanner:
     category = CATEGORY
 
-    def scan(self, repo_path: Path) -> list[ScanFinding]:
-        source_files: list[Path] = []
-        test_files: list[Path] = []
-        root_names = {p.name.lower() for p in repo_path.iterdir()} if repo_path.is_dir() else set()
-
-        for path in iter_files(repo_path):
-            if not is_source_file(path):
-                continue
-            source_files.append(path)
-            if _is_test_path(path, repo_path):
-                test_files.append(path)
+    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+        source_files = list(repo.source_files)
+        test_files = [p for p in source_files if _is_test_path(p, repo.path)]
 
         findings: list[ScanFinding] = []
         findings.extend(self._check_tests(source_files, test_files))
-        findings.extend(self._check_lockfiles(repo_path, root_names))
-        findings.extend(self._check_file_sizes(source_files, repo_path))
-        findings.extend(self._check_layout(source_files, repo_path))
-        findings.extend(self._check_readme(root_names))
+        findings.extend(self._check_lockfiles(repo))
+        findings.extend(self._check_file_sizes(source_files, repo))
+        findings.extend(self._check_layout(source_files, repo))
+        findings.extend(self._check_readme(repo))
         return findings
 
     def _check_tests(self, source_files: list[Path], test_files: list[Path]) -> list[ScanFinding]:
@@ -110,12 +102,11 @@ class ArchitectureScanner:
             )
         ]
 
-    def _check_lockfiles(self, repo_path: Path, root_names: set[str]) -> list[ScanFinding]:
+    def _check_lockfiles(self, repo: RepositoryIndex) -> list[ScanFinding]:
         unlocked = [
             manifest
             for manifest, locks in _LOCKFILES.items()
-            if manifest.lower() in root_names
-            and not any(lock.lower() in root_names for lock in locks)
+            if repo.has_root_entry(manifest) and not repo.has_root_entry(*locks)
         ]
         if not unlocked:
             return []
@@ -137,12 +128,16 @@ class ArchitectureScanner:
             )
         ]
 
-    def _check_file_sizes(self, source_files: list[Path], repo_path: Path) -> list[ScanFinding]:
+    def _check_file_sizes(
+        self, source_files: list[Path], repo: RepositoryIndex
+    ) -> list[ScanFinding]:
         oversized = []
         for path in source_files:
-            lines = read_text(path).count("\n")
+            # Through the index, so a later scanner grepping the same files
+            # reads them from memory rather than off disk again.
+            lines = repo.read(path).count("\n")
             if lines > _MAX_FILE_LINES:
-                oversized.append((path.relative_to(repo_path).as_posix(), lines))
+                oversized.append((repo.relative(path), lines))
 
         if not oversized:
             return []
@@ -167,8 +162,8 @@ class ArchitectureScanner:
             )
         ]
 
-    def _check_layout(self, source_files: list[Path], repo_path: Path) -> list[ScanFinding]:
-        depths = Counter(len(p.relative_to(repo_path).parts) for p in source_files)
+    def _check_layout(self, source_files: list[Path], repo: RepositoryIndex) -> list[ScanFinding]:
+        depths = Counter(len(p.relative_to(repo.path).parts) for p in source_files)
         at_root = depths.get(1, 0)
         nested = sum(count for depth, count in depths.items() if depth > 1)
 
@@ -192,8 +187,8 @@ class ArchitectureScanner:
             )
         ]
 
-    def _check_readme(self, root_names: set[str]) -> list[ScanFinding]:
-        if any(name in root_names for name in _README_NAMES):
+    def _check_readme(self, repo: RepositoryIndex) -> list[ScanFinding]:
+        if repo.has_root_entry(*_README_NAMES):
             return []
         return [
             ScanFinding(

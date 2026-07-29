@@ -9,14 +9,19 @@ from pathlib import Path
 
 import pytest
 
-from app.scanners.base import Severity
+from app.scanners.base import RepositoryIndex, Severity
 from app.scanners.deployment import DeploymentScanner
 
 SCANNER = DeploymentScanner()
 
 
+def _scan(repo: Path):
+    """Scanners take the shared index, so tests build one per call."""
+    return SCANNER.scan(RepositoryIndex.build(repo))
+
+
 def _titles(repo: Path) -> set[str]:
-    return {f.title for f in SCANNER.scan(repo)}
+    return {f.title for f in _scan(repo)}
 
 
 def _write(root: Path, name: str, content: str) -> None:
@@ -48,21 +53,21 @@ def healthy_repo(tmp_path: Path) -> Path:
 
 class TestHealthyRepository:
     def test_produces_no_findings(self, healthy_repo: Path) -> None:
-        assert SCANNER.scan(healthy_repo) == []
+        assert _scan(healthy_repo) == []
 
     def test_every_finding_belongs_to_this_category(self, tmp_path: Path) -> None:
-        assert {f.category for f in SCANNER.scan(tmp_path)} == {"deployment"}
+        assert {f.category for f in _scan(tmp_path)} == {"deployment"}
 
     def test_impacts_cannot_exceed_the_category_weight(self, tmp_path: Path) -> None:
         """A repository failing everything scores the category zero, not below."""
         _write(tmp_path, "Dockerfile", 'FROM python\nCMD ["python"]\n')
 
-        assert sum(f.score_impact for f in SCANNER.scan(tmp_path)) <= 15
+        assert sum(f.score_impact for f in _scan(tmp_path)) <= 15
 
     def test_the_worst_case_with_no_config_also_fits(self, tmp_path: Path) -> None:
         _write(tmp_path, "README.md", "# docs\n")
 
-        assert sum(f.score_impact for f in SCANNER.scan(tmp_path)) <= 15
+        assert sum(f.score_impact for f in _scan(tmp_path)) <= 15
 
 
 class TestDeploymentConfig:
@@ -72,7 +77,7 @@ class TestDeploymentConfig:
         assert "No deployment configuration" in _titles(tmp_path)
 
     def test_is_high_severity(self, tmp_path: Path) -> None:
-        finding = next(f for f in SCANNER.scan(tmp_path) if f.title.startswith("No deployment"))
+        finding = next(f for f in _scan(tmp_path) if f.title.startswith("No deployment"))
 
         assert finding.severity is Severity.HIGH
 
@@ -222,12 +227,12 @@ class TestCiPipeline:
 
 class TestRobustness:
     def test_an_empty_repository_does_not_raise(self, tmp_path: Path) -> None:
-        SCANNER.scan(tmp_path)
+        _scan(tmp_path)
 
     def test_a_malformed_dockerfile_does_not_raise(self, tmp_path: Path) -> None:
         _write(tmp_path, "Dockerfile", "this is not a dockerfile\n\x00\x01\n")
 
-        SCANNER.scan(tmp_path)
+        _scan(tmp_path)
 
     def test_comments_are_ignored(self, tmp_path: Path) -> None:
         _write(

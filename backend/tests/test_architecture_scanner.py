@@ -10,13 +10,18 @@ from pathlib import Path
 import pytest
 
 from app.scanners.architecture import ArchitectureScanner
-from app.scanners.base import Severity
+from app.scanners.base import RepositoryIndex, Severity
 
 SCANNER = ArchitectureScanner()
 
 
+def _scan(repo: Path):
+    """Scanners take the shared index, so tests build one per call."""
+    return SCANNER.scan(RepositoryIndex.build(repo))
+
+
 def _titles(repo: Path) -> set[str]:
-    return {finding.title for finding in SCANNER.scan(repo)}
+    return {finding.title for finding in _scan(repo)}
 
 
 @pytest.fixture
@@ -34,19 +39,19 @@ def healthy_repo(tmp_path: Path) -> Path:
 
 class TestHealthyRepository:
     def test_produces_no_findings(self, healthy_repo: Path) -> None:
-        assert SCANNER.scan(healthy_repo) == []
+        assert _scan(healthy_repo) == []
 
     def test_every_finding_belongs_to_this_category(self, tmp_path: Path) -> None:
         (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
 
-        assert {f.category for f in SCANNER.scan(tmp_path)} == {"architecture"}
+        assert {f.category for f in _scan(tmp_path)} == {"architecture"}
 
     def test_impacts_cannot_exceed_the_category_weight(self, tmp_path: Path) -> None:
         """Everything failing at once must score the category zero, not below."""
         for index in range(20):
             (tmp_path / f"mod{index}.py").write_text("x\n" * 700, encoding="utf-8")
 
-        assert sum(f.score_impact for f in SCANNER.scan(tmp_path)) <= 20
+        assert sum(f.score_impact for f in _scan(tmp_path)) <= 20
 
 
 class TestTests:
@@ -58,7 +63,7 @@ class TestTests:
     def test_is_the_most_severe_check(self, tmp_path: Path) -> None:
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-        finding = next(f for f in SCANNER.scan(tmp_path) if f.title.startswith("No automated"))
+        finding = next(f for f in _scan(tmp_path) if f.title.startswith("No automated"))
         assert finding.severity is Severity.HIGH
 
     @pytest.mark.parametrize(
@@ -118,7 +123,7 @@ class TestFileSize:
         (tmp_path / "big.py").write_text("x = 1\n" * 700, encoding="utf-8")
         (tmp_path / "bigger.py").write_text("x = 1\n" * 900, encoding="utf-8")
 
-        matching = [f for f in SCANNER.scan(tmp_path) if f.title.startswith("Source files are")]
+        matching = [f for f in _scan(tmp_path) if f.title.startswith("Source files are")]
         assert len(matching) == 1
         assert "bigger.py" in matching[0].description
 
@@ -174,12 +179,12 @@ class TestRobustness:
         vendored.mkdir(parents=True)
         (vendored / "index.js").write_text("x\n" * 900, encoding="utf-8")
 
-        assert SCANNER.scan(tmp_path) == []
+        assert _scan(tmp_path) == []
 
     def test_an_empty_repository_does_not_raise(self, tmp_path: Path) -> None:
-        SCANNER.scan(tmp_path)
+        _scan(tmp_path)
 
     def test_a_binary_file_does_not_raise(self, tmp_path: Path) -> None:
         (tmp_path / "blob.py").write_bytes(b"\xff\xfe\x00\x01")
 
-        SCANNER.scan(tmp_path)
+        _scan(tmp_path)

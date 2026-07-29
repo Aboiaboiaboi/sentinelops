@@ -19,7 +19,7 @@ concurrent logins. The worker dispatches them with asyncio.to_thread.
 import enum
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -63,8 +63,11 @@ class Scanner(Protocol):
 
     category: str
 
-    def scan(self, repo_path: Path) -> list[ScanFinding]:
+    def scan(self, repo: "RepositoryIndex") -> list[ScanFinding]:
         """Inspect a checkout and report what is wrong with it.
+
+        Takes the shared index rather than a path, so that six scanners do not
+        each walk the same tree. See `RepositoryIndex`.
 
         Must not raise for ordinary problems — an unreadable file or an
         unfamiliar layout is a finding or a silence, not an exception. Raising
@@ -172,3 +175,76 @@ def read_text(path: Path, *, max_bytes: int = MAX_READ_BYTES) -> str:
     except OSError:
         return ""
     return raw.decode("utf-8", errors="replace")
+
+
+# How much file content the index will hold on to. Beyond this, reads still
+# work — they just stop being remembered. A bound rather than "cache
+# everything" because a repository is allowed to be 500 MB, and holding a
+# meaningful fraction of that per concurrent scan would put the worker under
+# memory pressure for a saving nobody asked for.
+MAX_CACHED_BYTES = 32_000_000
+
+
+@dataclass
+class RepositoryIndex:
+    """One pass over a checkout, shared by every scanner.
+
+    Built once per scan and handed to all six. Before this existed each scanner
+    walked the tree itself — the deployment scanner managed it twice in one
+    call — so a six-scanner run meant something like a dozen traversals of the
+    same directory to answer questions that never change mid-scan.
+
+    Also memoises reads, so several scanners grepping the same source files
+    costs one read rather than one each.
+
+    Not a general-purpose cache: it is built after the clone and thrown away
+    with it, so nothing here has to worry about the tree changing underneath.
+    """
+
+    path: Path
+    #: Every regular file, symlinks and vendored directories already excluded.
+    files: tuple[Path, ...]
+    #: The subset that is hand-written source.
+    source_files: tuple[Path, ...]
+    #: Lower-cased names of entries directly in the repository root, for the
+    #: many checks that are really "is there a README / lockfile / CI config".
+    root_names: frozenset[str]
+
+    _cache: dict[Path, str] = field(default_factory=dict, repr=False)
+    _cached_bytes: int = field(default=0, repr=False)
+
+    @classmethod
+    def build(cls, repo_path: Path) -> "RepositoryIndex":
+        """Walk the tree once. Blocking — callers run it off the event loop."""
+        files = tuple(iter_files(repo_path))
+        try:
+            root_names = frozenset(entry.name.lower() for entry in repo_path.iterdir())
+        except OSError:
+            root_names = frozenset()
+
+        return cls(
+            path=repo_path,
+            files=files,
+            source_files=tuple(p for p in files if is_source_file(p)),
+            root_names=root_names,
+        )
+
+    def read(self, path: Path, *, max_bytes: int = MAX_READ_BYTES) -> str:
+        """Read a file, remembering the result within the byte budget."""
+        cached = self._cache.get(path)
+        if cached is not None:
+            return cached
+
+        content = read_text(path, max_bytes=max_bytes)
+        if self._cached_bytes + len(content) <= MAX_CACHED_BYTES:
+            self._cache[path] = content
+            self._cached_bytes += len(content)
+        return content
+
+    def relative(self, path: Path) -> str:
+        """A path as the user would recognise it, with forward slashes."""
+        return path.relative_to(self.path).as_posix()
+
+    def has_root_entry(self, *names: str) -> bool:
+        """Whether any of `names` sits directly in the repository root."""
+        return any(name.lower() in self.root_names for name in names)

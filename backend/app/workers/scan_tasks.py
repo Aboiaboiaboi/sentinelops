@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import SessionLocal
 from app.models import SCAN_CATEGORIES, CategoryStatus
 from app.scanners import registry
-from app.scanners.base import ScanFinding
+from app.scanners.base import RepositoryIndex, ScanFinding
 from app.scanners.framework import detect_framework
 from app.services import project_service, scan_service, scoring_service
 from app.workers.repo import CloneError, cloned_repository
@@ -134,6 +134,19 @@ async def _run_scanners(
     behaviour the whole design is built around: the scan completes with whatever
     reported, and the categories that did not cost their weight.
     """
+    # One walk of the tree, shared by every scanner. Built off the event loop
+    # like the scanners themselves — it is filesystem work, and on a large
+    # repository it is not instant.
+    index = await asyncio.to_thread(RepositoryIndex.build, repo_path)
+    logger.info(
+        "repository indexed",
+        extra={
+            "scan_id": str(scan_id),
+            "files": len(index.files),
+            "source_files": len(index.source_files),
+        },
+    )
+
     findings: list[ScanFinding] = []
     category_status: dict[str, str] = {}
 
@@ -160,7 +173,7 @@ async def _run_scanners(
             # Off the event loop. Scanners are file and subprocess work, and one
             # running inside a coroutine would stall every other job this worker
             # is handling.
-            produced = await asyncio.to_thread(scanner.scan, repo_path)
+            produced = await asyncio.to_thread(scanner.scan, index)
         except Exception:
             logger.exception(
                 "scanner failed",

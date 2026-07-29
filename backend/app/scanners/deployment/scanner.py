@@ -10,11 +10,10 @@ noise. What matters is the stages that actually run something.
 """
 
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.scanners.base import ScanFinding, Severity, iter_files, read_text
+from app.scanners.base import RepositoryIndex, ScanFinding, Severity
 
 CATEGORY = "deployment"
 
@@ -42,10 +41,15 @@ _ORCHESTRATION_DIRECTORIES = frozenset(
     {"k8s", "kubernetes", "manifests", "deploy", "deployment", "helm", "charts"}
 )
 
-_CI_PATHS = (
-    ".github/workflows",
+# CI providers that keep their config in a directory. Matched on the path
+# prefix so that an *empty* .github/workflows/ does not count — a directory with
+# no workflow in it runs nothing.
+_CI_DIRECTORY_PREFIXES = (".github/workflows/", ".circleci/")
+
+# Providers that use a single file at the repository root.
+_CI_ROOT_FILES = (
     ".gitlab-ci.yml",
-    ".circleci/config.yml",
+    ".gitlab-ci.yaml",
     "jenkinsfile",
     "azure-pipelines.yml",
     ".drone.yml",
@@ -117,6 +121,26 @@ def _is_pinned(image: str, known_stages: set[str]) -> bool:
     return tag.lower() not in {"latest", ""}
 
 
+def _is_dockerfile(path: Path) -> bool:
+    name = path.name.lower()
+    return (
+        name in _DOCKERFILE_NAMES or name.startswith("dockerfile.") or name.endswith(".dockerfile")
+    )
+
+
+def _is_orchestration(path: Path, root: Path) -> bool:
+    """Compose, a Kubernetes layout, or a Helm chart.
+
+    A repository can legitimately have no Dockerfile — the image may be built
+    elsewhere — while still describing how it is deployed.
+    """
+    name = path.name.lower()
+    if name in _COMPOSE_NAMES or name == "chart.yaml":
+        return True
+    relative = path.relative_to(root)
+    return any(part.lower() in _ORCHESTRATION_DIRECTORIES for part in relative.parts[:-1])
+
+
 def _runs_as_root(stage: _Stage) -> bool:
     users = stage.instructions.get("user", [])
     if not users:
@@ -130,42 +154,27 @@ def _runs_as_root(stage: _Stage) -> bool:
 class DeploymentScanner:
     category = CATEGORY
 
-    def scan(self, repo_path: Path) -> list[ScanFinding]:
-        dockerfiles = list(self._find_dockerfiles(repo_path))
-        has_orchestration = self._has_orchestration(repo_path)
+    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+        # Both questions answered in one pass over the already-built index.
+        # This used to be two separate walks of the tree, which on top of the
+        # other scanners' walks meant traversing the same repository roughly a
+        # dozen times per scan.
+        dockerfiles: list[Path] = []
+        has_orchestration = False
+        for path in repo.files:
+            if _is_dockerfile(path):
+                dockerfiles.append(path)
+            elif not has_orchestration and _is_orchestration(path, repo.path):
+                has_orchestration = True
 
         findings: list[ScanFinding] = []
         if not dockerfiles and not has_orchestration:
             findings.append(self._no_deployment_config())
         elif dockerfiles:
-            findings.extend(self._check_dockerfiles(dockerfiles, repo_path))
+            findings.extend(self._check_dockerfiles(dockerfiles, repo))
 
-        findings.extend(self._check_ci(repo_path))
+        findings.extend(self._check_ci(repo))
         return findings
-
-    def _find_dockerfiles(self, repo_path: Path) -> Iterator[Path]:
-        for path in iter_files(repo_path):
-            name = path.name.lower()
-            if name in _DOCKERFILE_NAMES or name.startswith("dockerfile."):
-                yield path
-            elif name.endswith(".dockerfile"):
-                yield path
-
-    def _has_orchestration(self, repo_path: Path) -> bool:
-        """Compose or a Kubernetes/Helm layout.
-
-        A repository can legitimately have no Dockerfile — the image may be
-        built elsewhere — while still describing how it is deployed.
-        """
-        for path in iter_files(repo_path):
-            if path.name.lower() in _COMPOSE_NAMES:
-                return True
-            relative = path.relative_to(repo_path)
-            if any(part.lower() in _ORCHESTRATION_DIRECTORIES for part in relative.parts[:-1]):
-                return True
-            if path.name.lower() == "chart.yaml":
-                return True
-        return False
 
     def _no_deployment_config(self) -> ScanFinding:
         return ScanFinding(
@@ -184,15 +193,17 @@ class DeploymentScanner:
             score_impact=_NO_DEPLOYMENT_CONFIG,
         )
 
-    def _check_dockerfiles(self, dockerfiles: list[Path], repo_path: Path) -> list[ScanFinding]:
+    def _check_dockerfiles(
+        self, dockerfiles: list[Path], repo: RepositoryIndex
+    ) -> list[ScanFinding]:
         unpinned: list[str] = []
         root_stages: list[str] = []
         healthchecked = False
         runnable_seen = False
 
         for path in dockerfiles:
-            relative = path.relative_to(repo_path).as_posix()
-            stages = _parse_stages(read_text(path))
+            relative = repo.relative(path)
+            stages = _parse_stages(repo.read(path))
             names = {s.name.lower() for s in stages if s.name}
 
             for stage in stages:
@@ -267,17 +278,15 @@ class DeploymentScanner:
             )
         return findings
 
-    def _check_ci(self, repo_path: Path) -> list[ScanFinding]:
-        for candidate in _CI_PATHS:
-            path = repo_path / candidate
-            if path.is_dir() and any(path.iterdir()):
-                return []
-            if path.is_file():
-                return []
-        # Case-insensitive fallback, since Jenkinsfile is capitalised in practice.
-        for entry in repo_path.iterdir():
-            if entry.name.lower() in _CI_PATHS:
-                return []
+    def _check_ci(self, repo: RepositoryIndex) -> list[ScanFinding]:
+        # A CI directory only counts if it has something in it — an empty
+        # .github/workflows/ runs nothing.
+        if any(
+            repo.relative(path).lower().startswith(_CI_DIRECTORY_PREFIXES) for path in repo.files
+        ):
+            return []
+        if repo.has_root_entry(*_CI_ROOT_FILES):
+            return []
 
         return [
             ScanFinding(
