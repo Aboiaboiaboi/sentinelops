@@ -9,12 +9,15 @@ Categories with no entry are not run. They are recorded as failed and cost their
 full weight, which is honest: nothing assessed them.
 """
 
+from app.scanners.architecture import ArchitectureScanner
 from app.scanners.base import Scanner
 
-# Populated as each scanner lands. The scan pipeline handles an empty registry
-# by reporting every category as unreported, which is exactly what a scan
-# containing no scanners should say.
-SCANNERS: dict[str, Scanner] = {}
+# Populated as each scanner lands. The pipeline handles a category with no entry
+# by recording it as unreported, which costs its full weight — honest, since
+# nothing assessed it.
+SCANNERS: dict[str, Scanner] = {
+    ArchitectureScanner.category: ArchitectureScanner(),
+}
 
 
 def get_scanner(category: str) -> Scanner | None:

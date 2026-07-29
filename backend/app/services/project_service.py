@@ -12,7 +12,7 @@ no request to raise into.
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Project, User
@@ -49,6 +49,17 @@ async def get_project(db: AsyncSession, *, owner: User, project_id: uuid.UUID) -
     return await db.scalar(
         select(Project).where(Project.id == project_id, Project.user_id == owner.id)
     )
+
+
+async def set_framework(db: AsyncSession, *, project_id: uuid.UUID, framework: str | None) -> None:
+    """Record the stack a scan detected.
+
+    No owner argument, and no ownership check: this is called by a worker
+    running a scan whose ownership was already proved when it was created. It is
+    not reachable from a route.
+    """
+    await db.execute(update(Project).where(Project.id == project_id).values(framework=framework))
+    await db.commit()
 
 
 async def delete_project(db: AsyncSession, *, owner: User, project_id: uuid.UUID) -> bool:

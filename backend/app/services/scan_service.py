@@ -11,13 +11,15 @@ functions with no request in scope.
 
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 
 from sqlalchemy import Text, cast, func, select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import SCAN_CATEGORIES, CategoryStatus, Finding, Project, Scan, ScanStatus, User
+from app.scanners.base import ScanFinding
 from app.utils.queue import get_queue
 
 logger = logging.getLogger(__name__)
@@ -121,6 +123,65 @@ async def get_scan(db: AsyncSession, *, owner: User, scan_id: uuid.UUID) -> Scan
 # was already proved when the scan was created. They are not reachable from a
 # route.
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ScanTarget:
+    """What a worker needs to run a scan, without loading ORM relationships.
+
+    Relationships are configured `lazy="raise_on_sql"`, so reaching a scan's
+    project through the attribute would raise rather than quietly emitting a
+    query. Selecting the two columns needed is both explicit and one round trip.
+    """
+
+    project_id: uuid.UUID
+    repository_url: str
+
+
+async def get_scan_target(db: AsyncSession, *, scan_id: uuid.UUID) -> ScanTarget | None:
+    """The repository a scan should clone, or None if the scan is gone.
+
+    No owner argument: ownership was proved when the scan was created, and a
+    worker has no request to attribute this to.
+    """
+    row = (
+        await db.execute(
+            select(Project.id, Project.repository_url)
+            .join(Scan, Scan.project_id == Project.id)
+            .where(Scan.id == scan_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    return ScanTarget(project_id=row[0], repository_url=row[1])
+
+
+async def record_findings(
+    db: AsyncSession, *, scan_id: uuid.UUID, findings: Iterable[ScanFinding]
+) -> int:
+    """Persist a category's findings, returning how many were written.
+
+    Takes the scanner's value objects and turns them into rows here, so that
+    scanners never touch the ORM and stay testable against a directory.
+    """
+    rows = [
+        Finding(
+            scan_id=scan_id,
+            category=finding.category,
+            severity=finding.severity,
+            title=finding.title,
+            description=finding.description,
+            recommendation=finding.recommendation,
+            score_impact=finding.score_impact,
+        )
+        for finding in findings
+    ]
+    if not rows:
+        return 0
+
+    db.add_all(rows)
+    await db.commit()
+    return len(rows)
 
 
 async def claim_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> bool:
