@@ -15,7 +15,7 @@ costs more than no README, because it should.
 from collections import Counter
 from pathlib import Path
 
-from app.scanners.base import ScanFinding, Severity, iter_files, read_text
+from app.scanners.base import ScanFinding, Severity, is_source_file, iter_files, read_text
 
 CATEGORY = "architecture"
 
@@ -25,32 +25,6 @@ _NO_LOCKFILE = 4
 _OVERSIZED_FILE = 3
 _FLAT_LAYOUT = 3
 _NO_README = 2
-
-SOURCE_SUFFIXES = frozenset(
-    {
-        ".py",
-        ".js",
-        ".jsx",
-        ".ts",
-        ".tsx",
-        ".go",
-        ".rs",
-        ".java",
-        ".kt",
-        ".rb",
-        ".php",
-        ".cs",
-        ".swift",
-        ".c",
-        ".cc",
-        ".cpp",
-        ".h",
-        ".hpp",
-        ".scala",
-        ".ex",
-        ".exs",
-    }
-)
 
 # Directory names that mean "the tests live here".
 _TEST_DIRECTORIES = frozenset({"tests", "test", "spec", "specs", "__tests__", "e2e"})
@@ -99,7 +73,7 @@ class ArchitectureScanner:
         root_names = {p.name.lower() for p in repo_path.iterdir()} if repo_path.is_dir() else set()
 
         for path in iter_files(repo_path):
-            if path.suffix.lower() not in SOURCE_SUFFIXES:
+            if not is_source_file(path):
                 continue
             source_files.append(path)
             if _is_test_path(path, repo_path):

@@ -5,30 +5,11 @@ get_current_user, and the first place one user could see another's data.
 """
 
 import uuid
-from collections.abc import AsyncIterator
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
-from app.main import app as fastapi_app
+from httpx import AsyncClient
 
 PROJECT = {"name": "sentinelops-api", "repository_url": "https://github.com/acme/sentinelops-api"}
-
-
-@pytest.fixture
-async def other_client() -> AsyncIterator[AsyncClient]:
-    """A second signed-in user, with its own cookie jar.
-
-    The get_db override installed by the `client` fixture is set on the app, so
-    this shares the same transactional session while being a different user.
-    """
-    transport = ASGITransport(app=fastapi_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        await client.post(
-            "/auth/signup",
-            json={"email": "intruder@example.com", "password": "correct horse battery"},
-        )
-        yield client
 
 
 class TestAuthentication:

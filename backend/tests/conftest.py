@@ -149,6 +149,24 @@ def queue() -> Iterator[InMemoryQueue]:
 
 
 @pytest.fixture
+async def other_client() -> AsyncIterator[AsyncClient]:
+    """A second signed-in user, with its own cookie jar.
+
+    Used by the ownership tests. The get_db override is installed on the app by
+    the `client` fixture, so this shares the same transactional session while
+    being a different user — meaning a test wanting both must request `client`
+    (or `authed_client`) as well.
+    """
+    transport = ASGITransport(app=fastapi_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        await http_client.post(
+            "/auth/signup",
+            json={"email": "intruder@example.com", "password": "correct horse battery"},
+        )
+        yield http_client
+
+
+@pytest.fixture
 async def authed_client(client: AsyncClient) -> AsyncClient:
     """A client that has signed up, so its cookie jar holds a valid auth cookie.
 

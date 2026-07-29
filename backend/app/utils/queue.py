@@ -10,12 +10,15 @@ Two implementations: `ArqQueue` for real use, and `InMemoryQueue` for tests and
 for any environment with no broker.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from arq import ArqRedis
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -43,6 +46,15 @@ class InMemoryQueue:
     published: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     async def publish(self, task: str, /, **payload: Any) -> str:
+        # Warned about because the failure is otherwise silent and confusing:
+        # the call succeeds, an id comes back, and the job simply never runs.
+        # Reaching this outside a test means the real queue was never installed
+        # — the app does that in its lifespan, so a script or CLI calling into
+        # services/ directly will land here.
+        logger.warning(
+            "publishing to the in-memory queue; no worker will receive this job",
+            extra={"task": task},
+        )
         self.published.append((task, payload))
         return f"mem-{uuid.uuid4()}"
 

@@ -6,14 +6,12 @@ polling loop or its status badge rather than raising anything visible.
 """
 
 import uuid
-from collections.abc import AsyncIterator
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.main import app as fastapi_app
 from app.models import SCAN_CATEGORIES, Finding, Scan, Severity
 
 PROJECT = {"name": "sentinelops-api", "repository_url": "https://github.com/acme/sentinelops-api"}
@@ -22,17 +20,6 @@ PROJECT = {"name": "sentinelops-api", "repository_url": "https://github.com/acme
 @pytest.fixture
 async def project_id(authed_client: AsyncClient) -> str:
     return (await authed_client.post("/projects", json=PROJECT)).json()["id"]
-
-
-@pytest.fixture
-async def other_client() -> AsyncIterator[AsyncClient]:
-    transport = ASGITransport(app=fastapi_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        await client.post(
-            "/auth/signup",
-            json={"email": "intruder@example.com", "password": "correct horse battery"},
-        )
-        yield client
 
 
 class TestCreateScan:
@@ -58,8 +45,28 @@ class TestCreateScan:
             "score",
             "scoring_version",
             "category_status",
+            "category_scores",
+            "category_max_scores",
             "created_at",
         }
+
+    async def test_category_scores_start_empty(
+        self, authed_client: AsyncClient, project_id: str
+    ) -> None:
+        """Present but empty, never absent — the client's type has no optional
+        keys and would read a missing one as undefined."""
+        body = (await authed_client.post(f"/projects/{project_id}/scans")).json()
+
+        assert body["category_scores"] == {}
+
+    async def test_max_scores_cover_every_category_and_sum_to_100(
+        self, authed_client: AsyncClient, project_id: str
+    ) -> None:
+        """Sent so the client needs no copy of the weight table to size a bar."""
+        body = (await authed_client.post(f"/projects/{project_id}/scans")).json()
+
+        assert set(body["category_max_scores"]) == set(SCAN_CATEGORIES)
+        assert sum(body["category_max_scores"].values()) == 100
 
     async def test_score_and_version_are_null_not_missing(
         self, authed_client: AsyncClient, project_id: str

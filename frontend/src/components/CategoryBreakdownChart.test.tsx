@@ -16,6 +16,8 @@ describe('CategoryBreakdownChart', () => {
       observability: 'pending',
       deployment: 'failed',
     },
+    category_scores: { security: 25 },
+    category_max_scores: { security: 25, observability: 10, deployment: 15 },
   });
 
   it('describes every category in text', () => {
@@ -44,6 +46,8 @@ describe('CategoryBreakdownChart', () => {
   it('omits that explanation when every category reported', () => {
     const complete = toCategoryScores({
       category_status: { security: 'completed', reliability: 'completed' },
+      category_scores: { security: 25, reliability: 20 },
+      category_max_scores: { security: 25, reliability: 20 },
     });
     render(<CategoryBreakdownChart categories={complete} />);
 

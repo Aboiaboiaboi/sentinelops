@@ -11,19 +11,16 @@ full weight, which is honest: nothing assessed them.
 
 from app.scanners.architecture import ArchitectureScanner
 from app.scanners.base import Scanner
+from app.scanners.deployment import DeploymentScanner
 
 # Populated as each scanner lands. The pipeline handles a category with no entry
 # by recording it as unreported, which costs its full weight — honest, since
 # nothing assessed it.
 SCANNERS: dict[str, Scanner] = {
     ArchitectureScanner.category: ArchitectureScanner(),
+    DeploymentScanner.category: DeploymentScanner(),
 }
 
 
 def get_scanner(category: str) -> Scanner | None:
     return SCANNERS.get(category)
-
-
-def available_categories() -> tuple[str, ...]:
-    """Categories that have a scanner, in the order the registry defines them."""
-    return tuple(SCANNERS)

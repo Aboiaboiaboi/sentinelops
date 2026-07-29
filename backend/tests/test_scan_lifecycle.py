@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.models import CategoryStatus, Project, Scan, ScanStatus, User
 from app.services import scan_service
+from tests.helpers import reload_scan
 
 
 @pytest.fixture
@@ -34,22 +35,12 @@ async def scan(session: AsyncSession) -> Scan:
     return row
 
 
-async def _reload(session: AsyncSession, scan_id: uuid.UUID) -> Scan:
-    """Re-read from the database rather than trusting the in-memory object.
-
-    The transitions run raw UPDATE statements, so an ORM instance held from
-    before them is stale by definition.
-    """
-    session.expire_all()
-    return await session.scalar(select(Scan).where(Scan.id == scan_id))
-
-
 class TestClaimScan:
     async def test_moves_pending_to_running(self, session: AsyncSession, scan: Scan) -> None:
         won = await scan_service.claim_scan(session, scan_id=scan.id)
 
         assert won is True
-        assert (await _reload(session, scan.id)).status is ScanStatus.RUNNING
+        assert (await reload_scan(session, scan.id)).status is ScanStatus.RUNNING
 
     async def test_only_one_caller_can_claim(self, session: AsyncSession, scan: Scan) -> None:
         """Two workers taking the same job would clone and scan the same
@@ -75,7 +66,7 @@ class TestRecordCategoryResult:
             session, scan_id=scan.id, category="security", status=CategoryStatus.COMPLETED
         )
 
-        assert (await _reload(session, scan.id)).category_status["security"] == "completed"
+        assert (await reload_scan(session, scan.id)).category_status["security"] == "completed"
 
     async def test_leaves_the_other_categories_alone(
         self, session: AsyncSession, scan: Scan
@@ -84,7 +75,7 @@ class TestRecordCategoryResult:
             session, scan_id=scan.id, category="security", status=CategoryStatus.COMPLETED
         )
 
-        statuses = (await _reload(session, scan.id)).category_status
+        statuses = (await reload_scan(session, scan.id)).category_status
         assert statuses["architecture"] == "pending"
         assert len(statuses) == 6
 
@@ -153,7 +144,7 @@ class TestRecordCategoryResult:
             session, scan_id=scan.id, category="observability", status=CategoryStatus.FAILED
         )
 
-        assert (await _reload(session, scan.id)).category_status["observability"] == "failed"
+        assert (await reload_scan(session, scan.id)).category_status["observability"] == "failed"
 
     async def test_rejects_an_unknown_category(self, session: AsyncSession, scan: Scan) -> None:
         """A typo would otherwise add a key the frontend renders as an unknown
@@ -172,7 +163,7 @@ class TestCompleteScan:
             session, scan_id=scan.id, score=82, scoring_version="v1"
         )
 
-        finished = await _reload(session, scan.id)
+        finished = await reload_scan(session, scan.id)
         assert finished.status is ScanStatus.COMPLETED
         assert finished.score == 82
         assert finished.scoring_version == "v1"
@@ -186,7 +177,7 @@ class TestCompleteScan:
             )
             is False
         )
-        assert (await _reload(session, scan.id)).status is ScanStatus.PENDING
+        assert (await reload_scan(session, scan.id)).status is ScanStatus.PENDING
 
     async def test_cannot_resurrect_a_failed_scan(self, session: AsyncSession, scan: Scan) -> None:
         """A duplicate job delivery must not turn a failure into a success."""
@@ -199,7 +190,7 @@ class TestCompleteScan:
             )
             is False
         )
-        assert (await _reload(session, scan.id)).status is ScanStatus.FAILED
+        assert (await reload_scan(session, scan.id)).status is ScanStatus.FAILED
 
 
 class TestFailScan:
@@ -207,7 +198,7 @@ class TestFailScan:
         await scan_service.claim_scan(session, scan_id=scan.id)
 
         assert await scan_service.fail_scan(session, scan_id=scan.id)
-        assert (await _reload(session, scan.id)).status is ScanStatus.FAILED
+        assert (await reload_scan(session, scan.id)).status is ScanStatus.FAILED
 
     async def test_fails_a_scan_that_was_never_claimed(
         self, session: AsyncSession, scan: Scan
@@ -215,18 +206,18 @@ class TestFailScan:
         """A job can die between being queued and being claimed. That scan must
         not poll forever."""
         assert await scan_service.fail_scan(session, scan_id=scan.id)
-        assert (await _reload(session, scan.id)).status is ScanStatus.FAILED
+        assert (await reload_scan(session, scan.id)).status is ScanStatus.FAILED
 
     async def test_leaves_score_null(self, session: AsyncSession, scan: Scan) -> None:
         """A zero would be indistinguishable from a genuinely terrible repo."""
         await scan_service.claim_scan(session, scan_id=scan.id)
         await scan_service.fail_scan(session, scan_id=scan.id)
 
-        assert (await _reload(session, scan.id)).score is None
+        assert (await reload_scan(session, scan.id)).score is None
 
     async def test_cannot_fail_a_completed_scan(self, session: AsyncSession, scan: Scan) -> None:
         await scan_service.claim_scan(session, scan_id=scan.id)
         await scan_service.complete_scan(session, scan_id=scan.id, score=70, scoring_version="v1")
 
         assert await scan_service.fail_scan(session, scan_id=scan.id) is False
-        assert (await _reload(session, scan.id)).status is ScanStatus.COMPLETED
+        assert (await reload_scan(session, scan.id)).status is ScanStatus.COMPLETED

@@ -10,7 +10,6 @@ import { ScanStatusBadge } from '@/components/ScanStatusBadge';
 import { ScoreGauge } from '@/components/ScoreGauge';
 import { reportedCount, toCategoryScores } from '@/lib/categories';
 import { cn } from '@/lib/utils';
-import { fixtureCategoryScoresFor } from '@/lib/fixtures';
 import { useFindings } from '@/hooks/useFindings';
 import { useScan } from '@/hooks/useScan';
 import { isScanFinished, scanAnnouncement, scoreToGrade } from '@/types/scan';
@@ -76,7 +75,7 @@ export default function ScanPage() {
 
   if (!scan) return null;
 
-  const categories = toCategoryScores(scan, fixtureCategoryScoresFor(scan.id));
+  const categories = toCategoryScores(scan);
   const { reported, total, complete } = reportedCount(categories);
 
   return (

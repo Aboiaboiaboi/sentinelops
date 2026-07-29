@@ -19,27 +19,19 @@ from app.workers.repo import (
     clone_repository,
     cloned_repository,
 )
+from tests.helpers import CloneSettings, commit_all, git, init_repo
 
 LIMITS = CloneLimits(timeout_seconds=30, max_bytes=10_000_000, max_files=1_000)
-
-
-def _run(*args: str, cwd: Path) -> None:
-    subprocess.run(args, cwd=cwd, check=True, capture_output=True)
 
 
 @pytest.fixture
 def source_repo(tmp_path: Path) -> Path:
     """A real git repository with one commit, usable as a clone source."""
-    repo = tmp_path / "source"
-    repo.mkdir()
-    _run("git", "init", "--quiet", "--initial-branch=main", cwd=repo)
-    _run("git", "config", "user.email", "test@example.com", cwd=repo)
-    _run("git", "config", "user.name", "Test", cwd=repo)
+    repo = init_repo(tmp_path / "source")
     (repo / "README.md").write_text("# demo\n", encoding="utf-8")
     (repo / "src").mkdir()
     (repo / "src" / "main.py").write_text("print('hi')\n", encoding="utf-8")
-    _run("git", "add", "-A", cwd=repo)
-    _run("git", "commit", "--quiet", "-m", "initial", cwd=repo)
+    commit_all(repo)
     return repo
 
 
@@ -79,7 +71,7 @@ class TestCloneRepository:
     def test_history_is_not_fetched(self, source_repo: Path, workspace: tuple[Path, Path]) -> None:
         """--depth 1. Full history on a large repository is most of the download
         for none of the value — a scan reads the current tree."""
-        _run("git", "commit", "--quiet", "--allow-empty", "-m", "second", cwd=source_repo)
+        git("commit", "--quiet", "--allow-empty", "-m", "second", cwd=source_repo)
         checkout, hooks = workspace
 
         clone_repository(source_repo.as_uri(), checkout, hooks_dir=hooks, limits=LIMITS)
@@ -139,8 +131,7 @@ class TestCloneRepository:
             (source_repo / "link").symlink_to(outside)
         except OSError:
             pytest.skip("symlink creation requires privileges on this platform")
-        _run("git", "add", "-A", cwd=source_repo)
-        _run("git", "commit", "--quiet", "-m", "add link", cwd=source_repo)
+        commit_all(source_repo, "add link")
 
         checkout, hooks = workspace
         # Would blow the cap if the 5MB target were measured through the link.
@@ -156,7 +147,7 @@ class TestClonedRepository:
         self, source_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "app.workers.repo.get_settings", lambda: _settings_with_root(tmp_path / "clones")
+            "app.workers.repo.get_settings", lambda: CloneSettings(tmp_path / "clones")
         )
 
         async with cloned_repository(source_repo.as_uri(), limits=LIMITS) as checkout:
@@ -166,7 +157,7 @@ class TestClonedRepository:
         self, source_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         root = tmp_path / "clones"
-        monkeypatch.setattr("app.workers.repo.get_settings", lambda: _settings_with_root(root))
+        monkeypatch.setattr("app.workers.repo.get_settings", lambda: CloneSettings(root))
 
         async with cloned_repository(source_repo.as_uri(), limits=LIMITS) as checkout:
             workspace = checkout.parent
@@ -178,7 +169,7 @@ class TestClonedRepository:
     ) -> None:
         """Otherwise the disk fills with abandoned copies of other people's code."""
         root = tmp_path / "clones"
-        monkeypatch.setattr("app.workers.repo.get_settings", lambda: _settings_with_root(root))
+        monkeypatch.setattr("app.workers.repo.get_settings", lambda: CloneSettings(root))
         captured: Path | None = None
 
         with pytest.raises(RuntimeError):
@@ -193,22 +184,10 @@ class TestClonedRepository:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         root = tmp_path / "clones"
-        monkeypatch.setattr("app.workers.repo.get_settings", lambda: _settings_with_root(root))
+        monkeypatch.setattr("app.workers.repo.get_settings", lambda: CloneSettings(root))
 
         with pytest.raises(CloneFailed):
             async with cloned_repository(str(tmp_path / "nope"), limits=LIMITS):
                 pass
 
         assert list(root.iterdir()) == []
-
-
-def _settings_with_root(root: Path):
-    """A stand-in for Settings exposing only what repo.py reads."""
-
-    class _Stub:
-        clone_root = root
-        clone_timeout_seconds = 30
-        clone_max_bytes = 10_000_000
-        clone_max_files = 1_000
-
-    return _Stub()

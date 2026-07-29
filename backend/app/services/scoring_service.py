@@ -63,6 +63,26 @@ def score_category(category: str, findings: Iterable[ScanFinding]) -> int:
     return max(0, category_max_score(category) - deducted)
 
 
+def score_by_category(
+    findings: Iterable[ScanFinding], category_status: Mapping[str, str]
+) -> dict[str, int]:
+    """Points each completed category earned.
+
+    Only completed categories appear. A category that did not report has no
+    score — not a zero, which would read as "assessed and found terrible"
+    rather than "not assessed".
+    """
+    by_category: dict[str, list[ScanFinding]] = {}
+    for finding in findings:
+        by_category.setdefault(finding.category, []).append(finding)
+
+    return {
+        category: score_category(category, by_category.get(category, ()))
+        for category in CATEGORY_WEIGHTS
+        if category_status.get(category) == CategoryStatus.COMPLETED.value
+    }
+
+
 def score_scan(findings: Iterable[ScanFinding], category_status: Mapping[str, str]) -> int:
     """Total score out of 100 for a scan.
 
@@ -71,13 +91,4 @@ def score_scan(findings: Iterable[ScanFinding], category_status: Mapping[str, st
     may have reported some of its problems and none of the rest, so counting
     them would deduct for a category whose weight is already forfeit.
     """
-    by_category: dict[str, list[ScanFinding]] = {}
-    for finding in findings:
-        by_category.setdefault(finding.category, []).append(finding)
-
-    total = 0
-    for category in CATEGORY_WEIGHTS:
-        if category_status.get(category) != CategoryStatus.COMPLETED.value:
-            continue
-        total += score_category(category, by_category.get(category, ()))
-    return total
+    return sum(score_by_category(findings, category_status).values())

@@ -1,24 +1,19 @@
 import type { CategoryScore, CategoryStatus, ScanSummary } from '@/types/scan';
 
 /**
- * Display labels and weight caps for the six scanner categories.
+ * Display names for the six scanner categories.
  *
- * ⚠️ PLACEHOLDER — needs a backend decision.
- * The scanner categories (the keys of `category_status`) and the scoring
- * weights are not yet a single agreed list, so the weights below are a
- * placeholder mapping onto the six real scanner categories, summing to 100.
- * They exist so the chart renders sensibly today.
- *
- * The backend should ultimately return each category's `maxScore` in the API
- * response so this table can be deleted rather than kept in sync by hand.
+ * Labels only. The weights used to live here too, as a hand-synced copy of the
+ * backend's rubric — the API now returns `category_max_scores`, so there is one
+ * source of truth and no table to keep in step.
  */
-export const CATEGORY_META: Record<string, { label: string; weight: number }> = {
-  security: { label: 'Security', weight: 25 },
-  reliability: { label: 'Reliability', weight: 20 },
-  architecture: { label: 'Architecture', weight: 20 },
-  deployment: { label: 'Deployment', weight: 15 },
-  observability: { label: 'Observability', weight: 10 },
-  scalability: { label: 'Scalability', weight: 10 },
+const CATEGORY_LABELS: Record<string, string> = {
+  security: 'Security',
+  reliability: 'Reliability',
+  architecture: 'Architecture',
+  deployment: 'Deployment',
+  observability: 'Observability',
+  scalability: 'Scalability',
 };
 
 function titleCase(value: string): string {
@@ -26,34 +21,33 @@ function titleCase(value: string): string {
 }
 
 export function categoryLabel(category: string): string {
-  return CATEGORY_META[category]?.label ?? titleCase(category);
-}
-
-export function categoryWeight(category: string): number {
-  return CATEGORY_META[category]?.weight ?? 0;
+  return CATEGORY_LABELS[category] ?? titleCase(category);
 }
 
 /**
- * Turns a scan's `category_status` map into chart rows.
+ * Turns a scan into chart rows.
  *
- * `scores` is optional because the API does not yet return per-category
- * points — only the overall score and each category's status. Until it does,
- * completed categories render at their full weight cap.
+ * Both the points and the cap come from the scan itself. Previously a completed
+ * category with no points supplied was drawn at its full cap, which made the
+ * chart contradict the headline score — a category worth 20 that lost 3 still
+ * showed a full bar.
+ *
+ * A completed category missing from `category_scores` still falls back to its
+ * cap, which is what old scans recorded before the API sent points.
  */
 export function toCategoryScores(
-  scan: Pick<ScanSummary, 'category_status'>,
-  scores?: Partial<Record<string, number>>,
+  scan: Pick<ScanSummary, 'category_status' | 'category_scores' | 'category_max_scores'>,
 ): CategoryScore[] {
   const entries = Object.entries(scan.category_status) as [string, CategoryStatus][];
 
   return entries
     .filter(([, status]) => Boolean(status))
     .map(([category, status]) => {
-      const maxScore = categoryWeight(category);
+      const maxScore = scan.category_max_scores[category] ?? 0;
       return {
         category,
         status,
-        score: status === 'completed' ? (scores?.[category] ?? maxScore) : null,
+        score: status === 'completed' ? (scan.category_scores[category] ?? maxScore) : null,
         maxScore,
       };
     })

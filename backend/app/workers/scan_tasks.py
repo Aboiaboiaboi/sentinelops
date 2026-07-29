@@ -79,12 +79,14 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
         await scan_service.fail_scan(db, scan_id=scan_id)
         raise
 
-    score = scoring_service.score_scan(findings, category_status)
+    category_scores = scoring_service.score_by_category(findings, category_status)
+    score = sum(category_scores.values())
     await scan_service.complete_scan(
         db,
         scan_id=scan_id,
         score=score,
         scoring_version=scoring_service.SCORING_VERSION,
+        category_scores=category_scores,
     )
     logger.info(
         "scan completed",
@@ -135,13 +137,23 @@ async def _run_scanners(
     findings: list[ScanFinding] = []
     category_status: dict[str, str] = {}
 
+    async def record(category: str, status: CategoryStatus) -> None:
+        """Write the result and remember it.
+
+        Both have to happen together: the database row is what the client polls,
+        and the in-memory copy is what the score is computed from. Two call
+        sites updating one and forgetting the other is exactly how a scan ends
+        up showing categories the score does not account for.
+        """
+        category_status[category] = status.value
+        await scan_service.record_category_result(
+            db, scan_id=scan_id, category=category, status=status
+        )
+
     for category in SCAN_CATEGORIES:
         scanner = registry.get_scanner(category)
         if scanner is None:
-            category_status[category] = CategoryStatus.FAILED.value
-            await scan_service.record_category_result(
-                db, scan_id=scan_id, category=category, status=CategoryStatus.FAILED
-            )
+            await record(category, CategoryStatus.FAILED)
             continue
 
         try:
@@ -154,18 +166,12 @@ async def _run_scanners(
                 "scanner failed",
                 extra={"scan_id": str(scan_id), "category": category},
             )
-            category_status[category] = CategoryStatus.FAILED.value
-            await scan_service.record_category_result(
-                db, scan_id=scan_id, category=category, status=CategoryStatus.FAILED
-            )
+            await record(category, CategoryStatus.FAILED)
             continue
 
         await scan_service.record_findings(db, scan_id=scan_id, findings=produced)
         findings.extend(produced)
-        category_status[category] = CategoryStatus.COMPLETED.value
-        await scan_service.record_category_result(
-            db, scan_id=scan_id, category=category, status=CategoryStatus.COMPLETED
-        )
+        await record(category, CategoryStatus.COMPLETED)
         logger.info(
             "category scanned",
             extra={"scan_id": str(scan_id), "category": category, "findings": len(produced)},

@@ -14,6 +14,7 @@ from app.services.scoring_service import (
     MAX_SCORE,
     SCORING_VERSION,
     category_max_score,
+    score_by_category,
     score_category,
     score_scan,
 )
@@ -132,6 +133,37 @@ class TestScoreScan:
         status = _all("completed") | {"security": "failed"}
 
         assert score_scan([], status) == 75
+
+
+class TestScoreByCategory:
+    """Per-category points, so a client can show what a category actually
+    scored instead of assuming a completed one scored full marks."""
+
+    def test_reports_each_completed_category(self) -> None:
+        scores = score_by_category([], _all("completed"))
+
+        assert scores == CATEGORY_WEIGHTS
+
+    def test_deductions_apply_to_the_right_category(self) -> None:
+        scores = score_by_category([_finding("architecture", 3)], _all("completed"))
+
+        assert scores["architecture"] == 17
+        assert scores["security"] == 25
+
+    def test_omits_categories_that_did_not_report(self) -> None:
+        """Absent rather than zero. A zero reads as "assessed and terrible"
+        rather than "not assessed"."""
+        status = _all("failed") | {"architecture": "completed"}
+
+        assert score_by_category([], status) == {"architecture": 20}
+
+    def test_totals_match_score_scan(self) -> None:
+        """The two must never disagree — the chart is drawn from one and the
+        headline number from the other."""
+        findings = [_finding("architecture", 3), _finding("security", 10)]
+        status = _all("completed") | {"deployment": "failed"}
+
+        assert sum(score_by_category(findings, status).values()) == score_scan(findings, status)
 
 
 class TestScoringVersion:

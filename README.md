@@ -139,7 +139,7 @@ they use a real database, because the schema relies on JSONB, native enums and
 ```bash
 cd backend
 uv sync
-uv run pytest                                    # 256 tests
+uv run pytest                                    # 263 tests
 uv run ruff check . && uv run ruff format --check .
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload             # API on :8000

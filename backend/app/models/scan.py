@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Uuid, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Uuid, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -80,6 +80,16 @@ class Scan(Base):
     # Maps category name -> CategoryStatus value. JSONB rather than JSON so the
     # contents stay queryable if scores ever need filtering by category outcome.
     category_status: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+    # Points each completed category actually earned, so a client can show what
+    # a category scored rather than assuming it scored full marks.
+    #
+    # Stored rather than derived on read. Deriving would mean loading every
+    # finding on GET /scans/{id}, which the client polls every three seconds —
+    # the polled endpoint has to stay a single indexed row read.
+    category_scores: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

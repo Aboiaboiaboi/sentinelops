@@ -39,10 +39,20 @@ const DEMO_CATEGORY_STATUS: CategoryStatusMap = {
 };
 
 /**
- * Per-category points. Held separately from the scan because the API does not
- * return them yet — without these, `toCategoryScores` falls back to each
- * category's full weight cap.
+ * The rubric the API reports alongside every scan. Mirrored here so fixture
+ * mode renders bars the same way the real thing does.
  */
+const CATEGORY_MAX_SCORES: Record<string, number> = {
+  security: 25,
+  reliability: 20,
+  architecture: 20,
+  deployment: 15,
+  observability: 10,
+  scalability: 10,
+};
+
+/** Per-category points for the finished scan. Only the categories that
+ * completed appear — a category that did not report has no score. */
 const DEMO_CATEGORY_SCORES: Record<string, number> = {
   security: 14,
   reliability: 16,
@@ -106,6 +116,8 @@ function toSummary(record: ScanRecord): ScanSummary {
       score: 68,
       scoring_version: 'v1',
       category_status: DEMO_CATEGORY_STATUS,
+      category_scores: DEMO_CATEGORY_SCORES,
+      category_max_scores: CATEGORY_MAX_SCORES,
     };
   }
 
@@ -123,6 +135,11 @@ function toSummary(record: ScanRecord): ScanSummary {
       observability: 'pending',
       scalability: 'pending',
     },
+    // Mid-scan the API has not written points yet, so a category that has just
+    // completed renders at its cap until the scan finishes. Matching that here
+    // keeps fixture mode honest about what the real thing looks like.
+    category_scores: {},
+    category_max_scores: CATEGORY_MAX_SCORES,
   };
 }
 
@@ -201,16 +218,6 @@ export const store = {
   listFindings: (scanId: string) =>
     delay(isFinished(scanId) ? [...fixtureFindings] : []),
 };
-
-/**
- * Per-category points for a scan, or undefined outside fixture mode — so pages
- * can call this unconditionally instead of branching on USE_FIXTURES themselves.
- */
-export function fixtureCategoryScoresFor(
-  scanId: string,
-): Record<string, number> | undefined {
-  return USE_FIXTURES && isFinished(scanId) ? DEMO_CATEGORY_SCORES : undefined;
-}
 
 /** The seeded finished scan. Exported for tests and direct inspection. */
 export const fixtureScan: ScanSummary = toSummary(scans[0]);

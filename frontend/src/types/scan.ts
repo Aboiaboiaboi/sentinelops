@@ -46,6 +46,17 @@ export interface ScanSummary {
   /** Which weight-set produced `score`, e.g. "v1". */
   scoring_version: string | null;
   category_status: CategoryStatusMap;
+  /**
+   * Points each completed category earned. Empty until the scan finishes.
+   *
+   * Only completed categories appear — a category that did not report is
+   * absent rather than zero, since "not assessed" and "assessed and scored
+   * nothing" are different things.
+   */
+  category_scores: Partial<Record<string, number>>;
+  /** Each category's cap. Sent by the API so this app needs no copy of the
+   * weight table. */
+  category_max_scores: Partial<Record<string, number>>;
   created_at: string;
 }
 

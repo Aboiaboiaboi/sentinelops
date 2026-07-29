@@ -101,6 +101,39 @@ SKIPPED_DIRECTORIES = frozenset(
 # checks these scanners do, and a repository can contain a multi-gigabyte blob.
 MAX_READ_BYTES = 1_000_000
 
+# What counts as hand-written source, as opposed to configuration, data or
+# documentation. Shared rather than per-scanner: every category needs the same
+# answer, and six copies would drift apart one language at a time.
+SOURCE_SUFFIXES = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".ex",
+        ".exs",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".scala",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+)
+
+
+def is_source_file(path: Path) -> bool:
+    return path.suffix.lower() in SOURCE_SUFFIXES
+
 
 def iter_files(root: Path) -> Iterator[Path]:
     """Yield regular files under `root`, safely.

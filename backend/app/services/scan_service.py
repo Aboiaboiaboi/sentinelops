@@ -11,7 +11,7 @@ functions with no request in scope.
 
 import logging
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import Text, cast, func, select, update
@@ -232,17 +232,30 @@ async def record_category_result(
 
 
 async def complete_scan(
-    db: AsyncSession, *, scan_id: uuid.UUID, score: int, scoring_version: str
+    db: AsyncSession,
+    *,
+    scan_id: uuid.UUID,
+    score: int,
+    scoring_version: str,
+    category_scores: Mapping[str, int] | None = None,
 ) -> bool:
     """Finish a scan, returning whether it was still running.
 
     Guarded on `running` so a duplicate delivery cannot overwrite a scan that
     already finished, and cannot resurrect one that failed.
+
+    `category_scores` holds what each completed category earned, so the client
+    can show a category's real score instead of assuming it scored full marks.
     """
     result = await db.execute(
         update(Scan)
         .where(Scan.id == scan_id, Scan.status == ScanStatus.RUNNING)
-        .values(status=ScanStatus.COMPLETED, score=score, scoring_version=scoring_version)
+        .values(
+            status=ScanStatus.COMPLETED,
+            score=score,
+            scoring_version=scoring_version,
+            category_scores=dict(category_scores or {}),
+        )
     )
     await db.commit()
     return result.rowcount == 1

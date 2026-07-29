@@ -9,7 +9,6 @@ import { FindingCard } from '@/components/FindingCard';
 import { ScoreGauge } from '@/components/ScoreGauge';
 import { reportUrl } from '@/api/scans';
 import { reportedCount, toCategoryScores } from '@/lib/categories';
-import { fixtureCategoryScoresFor } from '@/lib/fixtures';
 import { useFindings } from '@/hooks/useFindings';
 import { useScan } from '@/hooks/useScan';
 import { isScanFinished, scoreToGrade } from '@/types/scan';
@@ -43,7 +42,7 @@ export default function ReportPage() {
 
   if (!scan) return null;
 
-  const categories = toCategoryScores(scan, fixtureCategoryScoresFor(scan.id));
+  const categories = toCategoryScores(scan);
   const { reported, total, complete } = reportedCount(categories);
 
   return (

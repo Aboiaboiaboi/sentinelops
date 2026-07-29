@@ -5,7 +5,6 @@ only opens a session, and `execute_scan` takes one — which is what lets the
 transactional fixture keep these isolated.
 """
 
-import subprocess
 import uuid
 from pathlib import Path
 
@@ -15,9 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Finding, Project, Scan, ScanStatus, User
+from app.scanners import registry
 from app.services import scan_service
 from app.utils.queue import InMemoryQueue
 from app.workers.scan_tasks import execute_scan
+from tests.helpers import CloneSettings, commit_all, init_repo, reload_scan
 
 PROJECT = {"name": "api", "repository_url": "https://github.com/acme/api"}
 
@@ -31,11 +32,6 @@ async def owned_project(session: AsyncSession) -> Project:
     session.add(project)
     await session.commit()
     return project
-
-
-async def _reload(session: AsyncSession, scan_id: uuid.UUID) -> Scan:
-    session.expire_all()
-    return await session.scalar(select(Scan).where(Scan.id == scan_id))
 
 
 class TestQueueingOnCreate:
@@ -132,19 +128,14 @@ class TestExecuteScan:
 
     @pytest.fixture
     def source_repo(self, tmp_path: Path) -> Path:
-        repo = tmp_path / "source"
-        repo.mkdir()
-        _git("init", "--quiet", "--initial-branch=main", cwd=repo)
-        _git("config", "user.email", "t@example.com", cwd=repo)
-        _git("config", "user.name", "T", cwd=repo)
+        repo = init_repo(tmp_path / "source")
         # Deliberately imperfect: no README and no tests, so the architecture
         # scanner has something to report and the score is not a flat 20.
         (repo / "pyproject.toml").write_text('[project]\nname="x"\n', encoding="utf-8")
         (repo / "uv.lock").write_text("", encoding="utf-8")
         (repo / "app").mkdir()
         (repo / "app" / "main.py").write_text("print('hi')\n", encoding="utf-8")
-        _git("add", "-A", cwd=repo)
-        _git("commit", "--quiet", "-m", "initial", cwd=repo)
+        commit_all(repo)
         return repo
 
     @pytest.fixture(autouse=True)
@@ -152,7 +143,7 @@ class TestExecuteScan:
         """Clone into tmp_path rather than the configured repos/ directory."""
         monkeypatch.setattr(
             "app.workers.repo.get_settings",
-            lambda: _CloneSettings(tmp_path / "clones"),
+            lambda: CloneSettings(tmp_path / "clones"),
         )
 
     @pytest.fixture
@@ -175,7 +166,7 @@ class TestExecuteScan:
 
         await execute_scan(session, scan_id=scan.id)
 
-        assert (await _reload(session, scan.id)).status is ScanStatus.COMPLETED
+        assert (await reload_scan(session, scan.id)).status is ScanStatus.COMPLETED
 
     async def test_records_the_detected_framework(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
@@ -190,23 +181,23 @@ class TestExecuteScan:
         refreshed = await session.get(Project, project_id)
         assert refreshed.framework == "Python"
 
-    async def test_architecture_reports_and_the_rest_do_not(
+    async def test_only_the_built_scanners_report(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
     ) -> None:
-        """Only one scanner exists. The other five cost their weight, which is
-        honest — nothing assessed them."""
+        """Categories with no scanner cost their full weight, which is honest —
+        nothing assessed them."""
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
 
-        statuses = (await _reload(session, scan.id)).category_status
-        assert statuses["architecture"] == "completed"
-        assert {c: s for c, s in statuses.items() if c != "architecture"} == {
-            "security": "failed",
-            "deployment": "failed",
-            "reliability": "failed",
-            "observability": "failed",
-            "scalability": "failed",
+        statuses = (await reload_scan(session, scan.id)).category_status
+        reported = {c for c, s in statuses.items() if s == "completed"}
+        assert reported == set(registry.SCANNERS)
+        assert set(statuses) - reported == {
+            "security",
+            "reliability",
+            "observability",
+            "scalability",
         }
 
     async def test_persists_the_findings(
@@ -218,22 +209,35 @@ class TestExecuteScan:
 
         findings = (await session.scalars(select(Finding).where(Finding.scan_id == scan.id))).all()
         assert findings
-        assert {f.category for f in findings} == {"architecture"}
+        assert {f.category for f in findings} <= set(registry.SCANNERS)
         assert all(f.score_impact > 0 for f in findings)
 
     async def test_score_reflects_only_what_reported(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
     ) -> None:
-        """Architecture is worth 20. The fixture repo has no README and no
-        tests, so it loses 10 of those and the other categories contribute
-        nothing."""
+        """The fixture repo has no README and no tests, so architecture loses 10
+        of its 20; and no Dockerfile and no CI, so deployment loses all 15 of
+        its own. The four categories with no scanner contribute nothing."""
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
 
-        finished = await _reload(session, scan.id)
+        finished = await reload_scan(session, scan.id)
         assert finished.score == 10
         assert finished.scoring_version == "v1"
+
+    async def test_records_what_each_category_scored(
+        self, session: AsyncSession, scan_of: tuple[Scan, Project]
+    ) -> None:
+        """Only the categories that reported, and their points must add up to
+        the total — otherwise the chart and the headline number disagree."""
+        scan, _ = scan_of
+
+        await execute_scan(session, scan_id=scan.id)
+
+        finished = await reload_scan(session, scan.id)
+        assert finished.category_scores == {"architecture": 10, "deployment": 0}
+        assert sum(finished.category_scores.values()) == finished.score
 
     async def test_a_clone_failure_fails_the_scan(
         self, session: AsyncSession, tmp_path: Path
@@ -256,7 +260,7 @@ class TestExecuteScan:
 
         await execute_scan(session, scan_id=scan.id)
 
-        finished = await _reload(session, scan.id)
+        finished = await reload_scan(session, scan.id)
         assert finished.status is ScanStatus.FAILED
         assert finished.score is None
 
@@ -269,9 +273,6 @@ class TestExecuteScan:
         """The partial-failure behaviour the whole design is built around."""
         scan, _ = scan_of
 
-        def boom(repo_path: Path) -> list:
-            raise RuntimeError("scanner exploded")
-
         monkeypatch.setattr(
             "app.scanners.registry.SCANNERS",
             {"architecture": _CrashingScanner()},
@@ -279,7 +280,7 @@ class TestExecuteScan:
 
         await execute_scan(session, scan_id=scan.id)
 
-        finished = await _reload(session, scan.id)
+        finished = await reload_scan(session, scan.id)
         assert finished.status is ScanStatus.COMPLETED
         assert finished.category_status["architecture"] == "failed"
         assert finished.score == 0
@@ -290,11 +291,11 @@ class TestExecuteScan:
         """arq redelivers on retry; a duplicate must not rescan."""
         scan, _ = scan_of
         await execute_scan(session, scan_id=scan.id)
-        first = await _reload(session, scan.id)
+        first = await reload_scan(session, scan.id)
 
         await execute_scan(session, scan_id=scan.id)
 
-        second = await _reload(session, scan.id)
+        second = await reload_scan(session, scan.id)
         assert second.score == first.score
         findings = (await session.scalars(select(Finding).where(Finding.scan_id == scan.id))).all()
         assert len(findings) == len({f.title for f in findings})
@@ -308,18 +309,3 @@ class _CrashingScanner:
 
     def scan(self, repo_path: Path) -> list:
         raise RuntimeError("scanner exploded")
-
-
-class _CloneSettings:
-    """Stand-in exposing only what repo.py reads."""
-
-    clone_timeout_seconds = 60
-    clone_max_bytes = 10_000_000
-    clone_max_files = 5_000
-
-    def __init__(self, root: Path) -> None:
-        self.clone_root = root
-
-
-def _git(*args: str, cwd: Path) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
