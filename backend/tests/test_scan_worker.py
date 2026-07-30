@@ -217,17 +217,19 @@ class TestExecuteScan:
         any weight or impact fails here.
 
         The fixture repo has no README and no tests, so architecture loses 10 of
-        its 20. It has no Dockerfile and no CI, so deployment loses all 15.
-        Reliability scores full marks: it is detected as plain Python rather
-        than a web framework, so the health check does not apply, and it makes
-        no outbound calls and swallows no errors.
+        its 20. No Dockerfile and no CI, so deployment loses all 15.
+        Observability loses 6 of 10 for having no logging — the other two
+        observability checks are service-only and it is detected as plain
+        Python. Reliability scores full marks for the same reason: no health
+        check is expected of a library, and it makes no outbound calls and
+        swallows no errors.
         """
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
-        assert finished.score == 30
+        assert finished.score == 34
         assert finished.scoring_version == "v1"
 
     async def test_records_what_each_category_scored(
@@ -244,6 +246,7 @@ class TestExecuteScan:
             "architecture": 10,
             "deployment": 0,
             "reliability": 20,
+            "observability": 4,
         }
         assert sum(finished.category_scores.values()) == finished.score
 

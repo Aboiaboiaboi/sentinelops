@@ -53,7 +53,12 @@ class ArchitectureScanner:
     category = CATEGORY
 
     def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
-        source_files = list(repo.source_files)
+        # Hand-written code only. Generated files are excluded because none of
+        # these findings are actionable against them: nobody splits a 4000-line
+        # generated client into modules, and on a repository like
+        # kubernetes/client-go they are 82% of the tree, which would drown the
+        # signal from the code somebody actually maintains.
+        source_files = list(repo.production_files)
         test_files = list(repo.test_files)
 
         findings: list[ScanFinding] = []

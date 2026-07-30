@@ -21,30 +21,6 @@ _CALLS_WITHOUT_TIMEOUTS = 6
 _SWALLOWED_ERRORS = 4
 _NO_RETRY_HANDLING = 4
 
-# Frameworks that serve traffic. A CLI tool or a library has no health endpoint
-# because it should not have one — checking would be a guaranteed false
-# positive, so the check simply does not run.
-_SERVICE_FRAMEWORKS = frozenset(
-    {
-        "FastAPI",
-        "Django",
-        "Flask",
-        "Pyramid",
-        "Tornado",
-        "Express",
-        "NestJS",
-        "Next.js",
-        "Nuxt",
-        "Spring Boot",
-        "Quarkus",
-        "Micronaut",
-        "Ruby on Rails",
-        "Sinatra",
-        "Laravel",
-        "Symfony",
-    }
-)
-
 # Route paths and probe keys that mean "something can ask if I am alive".
 _HEALTH_MARKERS = (
     "/health",
@@ -100,10 +76,6 @@ _BARE_EXCEPT = re.compile(r"^\s*except\s*:", re.MULTILINE)
 _EXCEPT_PASS = re.compile(r"^\s*except\b[^\n]*:\s*\n\s*pass\s*$", re.MULTILINE)
 # JavaScript's equivalent: catch with an empty body.
 _EMPTY_CATCH = re.compile(r"\bcatch\s*(?:\([^)]*\))?\s*\{\s*\}")
-
-
-def _is_service(index: RepositoryIndex) -> bool:
-    return index.framework in _SERVICE_FRAMEWORKS
 
 
 class ReliabilityScanner:
@@ -168,7 +140,7 @@ class ReliabilityScanner:
     def _check_health(self, repo: RepositoryIndex, has_health: bool) -> list[ScanFinding]:
         # Only asked of things that serve traffic. A library answering health
         # checks would be the odd one out.
-        if has_health or not _is_service(repo):
+        if has_health or not repo.is_service:
             return []
         return [
             ScanFinding(
