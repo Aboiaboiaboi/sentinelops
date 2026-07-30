@@ -12,6 +12,7 @@ full weight, which is honest: nothing assessed them.
 from app.scanners.architecture import ArchitectureScanner
 from app.scanners.base import Scanner
 from app.scanners.deployment import DeploymentScanner
+from app.scanners.reliability import ReliabilityScanner
 
 # Populated as each scanner lands. The pipeline handles a category with no entry
 # by recording it as unreported, which costs its full weight — honest, since
@@ -19,6 +20,7 @@ from app.scanners.deployment import DeploymentScanner
 SCANNERS: dict[str, Scanner] = {
     ArchitectureScanner.category: ArchitectureScanner(),
     DeploymentScanner.category: DeploymentScanner(),
+    ReliabilityScanner.category: ReliabilityScanner(),
 }
 
 

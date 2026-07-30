@@ -58,8 +58,13 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
 
     try:
         async with cloned_repository(target.repository_url) as repo_path:
-            await _detect_and_record_framework(db, target.project_id, repo_path)
-            findings, category_status = await _run_scanners(db, scan_id, repo_path)
+            # Detected first so the scanners can see it. Whether a missing
+            # health endpoint is a problem depends on whether this is a service
+            # at all, and only the framework answers that.
+            framework = await _detect_and_record_framework(db, target.project_id, repo_path)
+            findings, category_status = await _run_scanners(
+                db, scan_id, repo_path, framework=framework
+            )
     except CloneError as exc:
         # Not re-raised. A repository that cannot be cloned will not clone on a
         # retry either — the URL is wrong, private, or the repo is too large —
@@ -103,7 +108,7 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
 
 async def _detect_and_record_framework(
     db: AsyncSession, project_id: uuid.UUID, repo_path: Path
-) -> None:
+) -> str | None:
     """Fill in Project.framework, which is null until a scan runs.
 
     Failure here is not fatal: not knowing the stack costs some context in later
@@ -113,16 +118,17 @@ async def _detect_and_record_framework(
         framework = await asyncio.to_thread(detect_framework, repo_path)
     except Exception:
         logger.exception("framework detection failed", extra={"project_id": str(project_id)})
-        return
+        return None
 
     if framework is None:
-        return
+        return None
     await project_service.set_framework(db, project_id=project_id, framework=framework)
     logger.info("framework detected", extra={"project_id": str(project_id), "framework": framework})
+    return framework
 
 
 async def _run_scanners(
-    db: AsyncSession, scan_id: uuid.UUID, repo_path: Path
+    db: AsyncSession, scan_id: uuid.UUID, repo_path: Path, *, framework: str | None
 ) -> tuple[list[ScanFinding], dict[str, str]]:
     """Run every category, recording each result as it lands.
 
@@ -137,7 +143,7 @@ async def _run_scanners(
     # One walk of the tree, shared by every scanner. Built off the event loop
     # like the scanners themselves — it is filesystem work, and on a large
     # repository it is not instant.
-    index = await asyncio.to_thread(RepositoryIndex.build, repo_path)
+    index = await asyncio.to_thread(RepositoryIndex.build, repo_path, framework=framework)
     logger.info(
         "repository indexed",
         extra={

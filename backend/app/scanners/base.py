@@ -138,6 +138,30 @@ def is_source_file(path: Path) -> bool:
     return path.suffix.lower() in SOURCE_SUFFIXES
 
 
+# Directory names that mean "the tests live here".
+TEST_DIRECTORIES = frozenset({"tests", "test", "spec", "specs", "__tests__", "e2e"})
+
+# Filename shapes that mean "this file is a test", across the ecosystems the
+# framework detector recognises.
+TEST_MARKERS = ("test_", "_test.", ".test.", ".spec.", "_spec.", "test.")
+
+
+def is_test_file(path: Path, root: Path) -> bool:
+    """Whether a file is part of the test suite rather than the product.
+
+    Shared because the distinction cuts both ways: the architecture scanner
+    wants to know tests *exist*, while every other category wants to ignore
+    them. A test that deliberately swallows an exception or calls out without a
+    timeout is not a production reliability problem, and flagging it is how a
+    scanner earns a reputation for crying wolf.
+    """
+    relative = path.relative_to(root)
+    if any(part.lower() in TEST_DIRECTORIES for part in relative.parts[:-1]):
+        return True
+    name = path.name.lower()
+    return any(marker in name for marker in TEST_MARKERS)
+
+
 def iter_files(root: Path) -> Iterator[Path]:
     """Yield regular files under `root`, safely.
 
@@ -206,15 +230,24 @@ class RepositoryIndex:
     files: tuple[Path, ...]
     #: The subset that is hand-written source.
     source_files: tuple[Path, ...]
+    #: Source files belonging to the test suite.
+    test_files: tuple[Path, ...]
+    #: Source files that are not tests — what actually ships.
+    production_files: tuple[Path, ...]
     #: Lower-cased names of entries directly in the repository root, for the
     #: many checks that are really "is there a README / lockfile / CI config".
     root_names: frozenset[str]
+
+    #: What the framework detector made of this repository, or None. Lets a
+    #: check ask "is this even a service?" — a CLI tool with no health endpoint
+    #: is correct, not broken, and flagging it would be a false positive.
+    framework: str | None = None
 
     _cache: dict[Path, str] = field(default_factory=dict, repr=False)
     _cached_bytes: int = field(default=0, repr=False)
 
     @classmethod
-    def build(cls, repo_path: Path) -> "RepositoryIndex":
+    def build(cls, repo_path: Path, *, framework: str | None = None) -> "RepositoryIndex":
         """Walk the tree once. Blocking — callers run it off the event loop."""
         files = tuple(iter_files(repo_path))
         try:
@@ -222,11 +255,16 @@ class RepositoryIndex:
         except OSError:
             root_names = frozenset()
 
+        source_files = tuple(p for p in files if is_source_file(p))
+        test_files = tuple(p for p in source_files if is_test_file(p, repo_path))
         return cls(
             path=repo_path,
             files=files,
-            source_files=tuple(p for p in files if is_source_file(p)),
+            source_files=source_files,
+            test_files=test_files,
+            production_files=tuple(p for p in source_files if p not in set(test_files)),
             root_names=root_names,
+            framework=framework,
         )
 
     def read(self, path: Path, *, max_bytes: int = MAX_READ_BYTES) -> str:

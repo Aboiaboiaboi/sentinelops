@@ -26,13 +26,6 @@ _OVERSIZED_FILE = 3
 _FLAT_LAYOUT = 3
 _NO_README = 2
 
-# Directory names that mean "the tests live here".
-_TEST_DIRECTORIES = frozenset({"tests", "test", "spec", "specs", "__tests__", "e2e"})
-
-# Filename shapes that mean "this file is a test", across the ecosystems the
-# framework detector already recognises.
-_TEST_MARKERS = ("test_", "_test.", ".test.", ".spec.", "_spec.", "test.")
-
 # Dependency manifest -> the lockfiles that would make its install reproducible.
 _LOCKFILES: dict[str, tuple[str, ...]] = {
     "package.json": ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"),
@@ -56,20 +49,12 @@ _MAX_FILE_LINES = 600
 _MAX_ROOT_SOURCE_FILES = 12
 
 
-def _is_test_path(path: Path, root: Path) -> bool:
-    relative = path.relative_to(root)
-    if any(part.lower() in _TEST_DIRECTORIES for part in relative.parts[:-1]):
-        return True
-    name = path.name.lower()
-    return any(marker in name for marker in _TEST_MARKERS)
-
-
 class ArchitectureScanner:
     category = CATEGORY
 
     def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
         source_files = list(repo.source_files)
-        test_files = [p for p in source_files if _is_test_path(p, repo.path)]
+        test_files = list(repo.test_files)
 
         findings: list[ScanFinding] = []
         findings.extend(self._check_tests(source_files, test_files))

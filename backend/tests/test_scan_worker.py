@@ -13,7 +13,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Finding, Project, Scan, ScanStatus, User
+from app.models import SCAN_CATEGORIES, Finding, Project, Scan, ScanStatus, User
 from app.scanners import registry
 from app.services import scan_service
 from app.utils.queue import InMemoryQueue
@@ -192,13 +192,11 @@ class TestExecuteScan:
 
         statuses = (await reload_scan(session, scan.id)).category_status
         reported = {c for c, s in statuses.items() if s == "completed"}
+
+        # Derived from the registry so this keeps passing as scanners land,
+        # while still failing if one stops reporting.
         assert reported == set(registry.SCANNERS)
-        assert set(statuses) - reported == {
-            "security",
-            "reliability",
-            "observability",
-            "scalability",
-        }
+        assert set(statuses) - reported == set(SCAN_CATEGORIES) - set(registry.SCANNERS)
 
     async def test_persists_the_findings(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
@@ -215,15 +213,21 @@ class TestExecuteScan:
     async def test_score_reflects_only_what_reported(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
     ) -> None:
-        """The fixture repo has no README and no tests, so architecture loses 10
-        of its 20; and no Dockerfile and no CI, so deployment loses all 15 of
-        its own. The four categories with no scanner contribute nothing."""
+        """Concrete numbers rather than derived ones, so an accidental change to
+        any weight or impact fails here.
+
+        The fixture repo has no README and no tests, so architecture loses 10 of
+        its 20. It has no Dockerfile and no CI, so deployment loses all 15.
+        Reliability scores full marks: it is detected as plain Python rather
+        than a web framework, so the health check does not apply, and it makes
+        no outbound calls and swallows no errors.
+        """
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
-        assert finished.score == 10
+        assert finished.score == 30
         assert finished.scoring_version == "v1"
 
     async def test_records_what_each_category_scored(
@@ -236,7 +240,11 @@ class TestExecuteScan:
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
-        assert finished.category_scores == {"architecture": 10, "deployment": 0}
+        assert finished.category_scores == {
+            "architecture": 10,
+            "deployment": 0,
+            "reliability": 20,
+        }
         assert sum(finished.category_scores.values()) == finished.score
 
     async def test_a_clone_failure_fails_the_scan(
