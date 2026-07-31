@@ -13,6 +13,7 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import Text, cast, func, select, update
 from sqlalchemy.dialects.postgresql import array
@@ -263,6 +264,38 @@ async def complete_scan(
     )
     await db.commit()
     return result.rowcount == 1
+
+
+async def record_commit_context(
+    db: AsyncSession,
+    *,
+    scan_id: uuid.UUID,
+    sha: str,
+    message: str,
+    author: str,
+    committed_at: datetime,
+) -> None:
+    """Record which commit this scan looked at.
+
+    Written as soon as the checkout exists rather than at completion, so a scan
+    that later fails still says what it was looking at — which is exactly when
+    someone wants to know.
+
+    Unguarded on status, unlike the other writes here: this is descriptive
+    metadata about a checkout, not a lifecycle transition, so there is no state
+    it could race into an inconsistent place.
+    """
+    await db.execute(
+        update(Scan)
+        .where(Scan.id == scan_id)
+        .values(
+            commit_sha=sha,
+            commit_message=message,
+            commit_author=author,
+            committed_at=committed_at,
+        )
+    )
+    await db.commit()
 
 
 async def fail_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> bool:

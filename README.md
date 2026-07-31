@@ -358,14 +358,17 @@ endpoints are rate limited.
 ## Roadmap
 
 - [x] **Foundation** — auth, database, API, Docker
-- [ ] **Scanning engine** — all 6 scanners built; private repositories remain
+- [x] **Scanning engine** — all 6 scanners, plus private repositories
+- [ ] **Explainability** — commit context on each scan, real reasons when one
+      fails, which checks passed rather than only what broke, and scan-to-scan
+      comparison
 - [ ] **Security tooling** — Gitleaks, Trivy, Semgrep, OSV, each in its own
       sandbox
 - [ ] **Reporting** — PDF export
 - [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
       Cloud Run
 
-Private repositories will use a GitHub App rather than stored access tokens, so
+Private repositories use a GitHub App rather than stored access tokens, so
 credentials expire hourly and are never persisted.
 
 ## Stack

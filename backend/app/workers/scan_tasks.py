@@ -32,7 +32,7 @@ from app.services.github_app_service import (
     get_github_app_auth,
     git_credential_header,
 )
-from app.workers.repo import CloneError, cloned_repository
+from app.workers.repo import CloneError, cloned_repository, read_head_commit
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,11 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
         async with cloned_repository(
             target.repository_url, credential_header=credential_header
         ) as repo_path:
+            # Recorded before the scanners run, so a scan that fails partway
+            # still says which commit it was looking at — precisely when
+            # somebody wants to know.
+            await _record_commit_context(db, scan_id, repo_path)
+
             # Detected first so the scanners can see it. Whether a missing
             # health endpoint is a problem depends on whether this is a service
             # at all, and only the framework answers that.
@@ -182,6 +187,31 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
                 1 for s in category_status.values() if s == CategoryStatus.COMPLETED.value
             ),
         },
+    )
+
+
+async def _record_commit_context(db: AsyncSession, scan_id: uuid.UUID, repo_path: Path) -> None:
+    """Store the HEAD commit, if the checkout has one.
+
+    Off the event loop because it shells out to git. Silence is a valid answer:
+    an empty repository has no HEAD, and commit context is an extra on top of a
+    scan rather than a precondition for one.
+    """
+    commit = await asyncio.to_thread(read_head_commit, repo_path)
+    if commit is None:
+        return
+
+    await scan_service.record_commit_context(
+        db,
+        scan_id=scan_id,
+        sha=commit.sha,
+        message=commit.message,
+        author=commit.author,
+        committed_at=commit.committed_at,
+    )
+    logger.info(
+        "commit context recorded",
+        extra={"scan_id": str(scan_id), "commit": commit.sha[:8]},
     )
 
 

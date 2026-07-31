@@ -25,6 +25,7 @@ import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from app.config import get_settings
@@ -125,6 +126,93 @@ def _git_environment() -> dict[str, str]:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class CommitInfo:
+    """The HEAD commit of a checkout.
+
+    What makes a score change attributable: "this dropped 6 points" is far more
+    useful as "this dropped 6 points *at this commit*".
+    """
+
+    sha: str
+    message: str
+    author: str
+    committed_at: datetime
+
+
+# Longest commit subject and author name kept. A repository is untrusted input
+# and neither field is length-limited by git — a subject can be megabytes, and
+# storing that verbatim would bloat a row nobody wants to read.
+MAX_COMMIT_MESSAGE = 500
+MAX_COMMIT_AUTHOR = 255
+
+# NUL separates the fields: it is the one byte git will not emit inside any of
+# them, so the split cannot be confused by a subject containing whatever a
+# repository author felt like typing.
+_COMMIT_FORMAT = "%H%x00%an%x00%aI%x00%s"
+
+
+def _sanitise(value: str, limit: int) -> str:
+    """Strip control characters and truncate.
+
+    Postgres rejects NUL in a text column outright, so an unsanitised commit
+    subject from a hostile repository is an insert that fails the whole scan.
+    Other control characters are dropped because this is display text.
+    """
+    cleaned = "".join(char for char in value if char.isprintable() or char in " \t")
+    return cleaned.strip()[:limit]
+
+
+def read_head_commit(checkout: Path) -> CommitInfo | None:
+    """The checkout's HEAD commit, or None if it has none.
+
+    Never raises. A repository with no commits at all has no HEAD — which is
+    not an error, it is the empty-repository case — and neither is a git that
+    declines to answer. Commit context is a nice-to-have on top of a scan, so
+    nothing here may fail the scan that already succeeded.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            ["git", "log", "-1", f"--format={_COMMIT_FORMAT}"],
+            cwd=checkout,
+            capture_output=True,
+            # Explicit UTF-8, not text=True. text=True decodes with the
+            # *locale* encoding, which on Windows is cp1252 — so a commit
+            # message containing an em-dash, an accent, an emoji or any CJK
+            # text came back mangled. git emits UTF-8 regardless of platform.
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            env=_git_environment(),
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    parts = result.stdout.split("\0")
+    if len(parts) != 4:
+        return None
+
+    sha, author, committed_at_raw, message = parts
+    try:
+        committed_at = datetime.fromisoformat(committed_at_raw.strip())
+    except ValueError:
+        return None
+
+    if not sha.strip():
+        return None
+
+    return CommitInfo(
+        sha=sha.strip()[:40],
+        message=_sanitise(message, MAX_COMMIT_MESSAGE),
+        author=_sanitise(author, MAX_COMMIT_AUTHOR),
+        committed_at=committed_at,
+    )
+
+
 def _measure_tree(root: Path, limits: CloneLimits) -> tuple[int, int]:
     """Total size and file count, raising as soon as either limit is passed.
 
@@ -209,7 +297,11 @@ def clone_repository(
         result = subprocess.run(  # noqa: S603 — fixed argv, no shell
             command,
             capture_output=True,
-            text=True,
+            # UTF-8 rather than text=True, for the same reason as
+            # read_head_commit: the locale decoder mangles any non-ASCII in
+            # git's output, and a repository name can contain anything.
+            encoding="utf-8",
+            errors="replace",
             timeout=limits.timeout_seconds,
             env=env,
             check=False,

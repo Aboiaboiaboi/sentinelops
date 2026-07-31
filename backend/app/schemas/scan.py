@@ -34,6 +34,14 @@ class ScanRead(BaseModel):
     # the total — a category worth 20 that lost 3 still drew a full bar.
     category_scores: dict[str, int]
 
+    # The commit this scan looked at. All null together when the checkout had
+    # no HEAD — an empty repository — or for scans that predate the field.
+    # Present rather than omitted, same reason as `score`.
+    commit_sha: str | None
+    commit_message: str | None
+    commit_author: str | None
+    committed_at: UtcDatetime | None
+
     created_at: UtcDatetime
 
     @computed_field  # type: ignore[prop-decorator]

@@ -47,8 +47,24 @@ class TestCreateScan:
             "category_status",
             "category_scores",
             "category_max_scores",
+            "commit_sha",
+            "commit_message",
+            "commit_author",
+            "committed_at",
             "created_at",
         }
+
+    async def test_commit_context_is_null_not_missing(
+        self, authed_client: AsyncClient, project_id: str
+    ) -> None:
+        """Nothing has been cloned yet, so there is no commit to report — but
+        the keys must be present, since the client's type has no optional
+        keys and would read a missing one as undefined."""
+        body = (await authed_client.post(f"/projects/{project_id}/scans")).json()
+
+        for field in ("commit_sha", "commit_message", "commit_author", "committed_at"):
+            assert field in body
+            assert body[field] is None
 
     async def test_category_scores_start_empty(
         self, authed_client: AsyncClient, project_id: str

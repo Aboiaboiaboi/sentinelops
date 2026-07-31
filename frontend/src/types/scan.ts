@@ -57,6 +57,17 @@ export interface ScanSummary {
   /** Each category's cap. Sent by the API so this app needs no copy of the
    * weight table. */
   category_max_scores: Partial<Record<string, number>>;
+  /**
+   * The commit this scan looked at. All null together when the repository had
+   * no commits, or for scans recorded before this was captured.
+   *
+   * What makes a score change attributable: "dropped 6 points" is far more
+   * useful as "dropped 6 points at this commit".
+   */
+  commit_sha: string | null;
+  commit_message: string | null;
+  commit_author: string | null;
+  committed_at: string | null;
   created_at: string;
 }
 

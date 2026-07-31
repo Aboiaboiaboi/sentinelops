@@ -91,6 +91,19 @@ class Scan(Base):
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
 
+    # The HEAD commit the scan actually looked at. All nullable together: a
+    # repository with no commits has no HEAD, and commit context is an extra on
+    # top of a scan rather than a precondition for one — a scan that could not
+    # read it still completed and still has a score.
+    #
+    # Recorded per scan rather than per project because the whole point is that
+    # it changes between scans; it is what makes a score change attributable to
+    # a change in the code.
+    commit_sha: Mapped[str | None] = mapped_column(String(40), default=None)
+    commit_message: Mapped[str | None] = mapped_column(String(500), default=None)
+    commit_author: Mapped[str | None] = mapped_column(String(255), default=None)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

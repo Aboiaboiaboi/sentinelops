@@ -110,6 +110,15 @@ function toSummary(record: ScanRecord): ScanSummary {
   const elapsed = record.startedAt === 0 ? Infinity : Date.now() - record.startedAt;
   const base = { id: record.id, project_id: record.project_id, created_at: record.created_at };
 
+  // Only known once the checkout exists, so a scan still running reports none —
+  // same as the real worker, which writes it after the clone.
+  const noCommit = {
+    commit_sha: null,
+    commit_message: null,
+    commit_author: null,
+    committed_at: null,
+  };
+
   if (elapsed >= SIMULATED_SCAN_MS) {
     return {
       ...base,
@@ -119,12 +128,17 @@ function toSummary(record: ScanRecord): ScanSummary {
       category_status: DEMO_CATEGORY_STATUS,
       category_scores: DEMO_CATEGORY_SCORES,
       category_max_scores: CATEGORY_MAX_SCORES,
+      commit_sha: '9f2c1ab4e7d05836a1bb42c9f0e7d2318ac54b60',
+      commit_message: 'feat(api): add rate limiting to the auth endpoints',
+      commit_author: 'Ada Lovelace',
+      committed_at: new Date(Date.now() - 3_600_000).toISOString(),
     };
   }
 
   const halfway = elapsed >= SIMULATED_SCAN_MS / 2;
   return {
     ...base,
+    ...noCommit,
     status: 'running',
     score: null,
     scoring_version: null,

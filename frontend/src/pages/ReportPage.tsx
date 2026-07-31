@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryBreakdownChart } from '@/components/CategoryBreakdownChart';
+import { CommitContext } from '@/components/CommitContext';
 import { FindingsList } from '@/components/FindingsList';
 import { ScoreGauge } from '@/components/ScoreGauge';
 import { reportUrl } from '@/api/scans';
@@ -111,6 +112,8 @@ export default function ReportPage() {
           <CategoryBreakdownChart categories={categories} />
         </CardContent>
       </Card>
+
+      <CommitContext scan={scan} />
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">
