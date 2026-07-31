@@ -137,6 +137,13 @@ function LegendSwatch({ status, children }: { status: CategoryStatus; children: 
   );
 }
 
+/** Legend order and wording, kept beside the styles they describe. */
+const LEGEND: { status: CategoryStatus; label: string }[] = [
+  { status: 'completed', label: 'Reported' },
+  { status: 'pending', label: 'Still scanning' },
+  { status: 'failed', label: 'Not reported' },
+];
+
 export interface CategoryBreakdownChartProps {
   categories: CategoryScore[];
   className?: string;
@@ -156,6 +163,14 @@ export function CategoryBreakdownChart({
 
   const rows = categories.map(toRow);
   const hasIncomplete = rows.some((r) => r.status !== 'completed');
+
+  // The legend describes what is on the chart, not every state that exists.
+  // Rendering all three unconditionally left the amber "Still scanning" swatch
+  // pulsing forever under a finished scan — advertising a state the scan was
+  // not in. With one state there is no colour encoding to decode, so the
+  // legend is omitted entirely and the bar captions carry the meaning.
+  const present = new Set(rows.map((row) => row.status));
+  const legend = LEGEND.filter((entry) => present.has(entry.status));
 
   return (
     <div className={className}>
@@ -203,11 +218,15 @@ export function CategoryBreakdownChart({
         </ResponsiveContainer>
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-1 text-xs text-muted-foreground">
-        <LegendSwatch status="completed">Reported</LegendSwatch>
-        <LegendSwatch status="pending">Still scanning</LegendSwatch>
-        <LegendSwatch status="failed">Not reported</LegendSwatch>
-      </div>
+      {legend.length > 1 && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-1 text-xs text-muted-foreground">
+          {legend.map((entry) => (
+            <LegendSwatch key={entry.status} status={entry.status}>
+              {entry.label}
+            </LegendSwatch>
+          ))}
+        </div>
+      )}
 
       {hasIncomplete && (
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">

@@ -30,12 +30,26 @@ function delay<T>(value: T): Promise<T> {
 }
 
 /** The finished scan's per-category outcome — all three states at once. */
+/**
+ * The category outcomes of a *finished* scan.
+ *
+ * Nothing is `pending` here, and that is not a detail: the worker records every
+ * category as completed or failed before it completes the scan, so a finished
+ * scan can never still be scanning something. This fixture used to leave
+ * observability pending, which made the demo show a completed scan whose
+ * legend still advertised "Still scanning" — an impossible state that looked
+ * like a UI bug because it was indistinguishable from one.
+ *
+ * `deployment: failed` stays, because a scan completing with one category
+ * missing is real: each runs in its own sandbox and one timing out does not
+ * invalidate the rest.
+ */
 const DEMO_CATEGORY_STATUS: CategoryStatusMap = {
   security: 'completed',
   reliability: 'completed',
   architecture: 'completed',
   deployment: 'failed',
-  observability: 'pending',
+  observability: 'completed',
   scalability: 'completed',
 };
 
@@ -54,12 +68,25 @@ const CATEGORY_MAX_SCORES: Record<string, number> = {
 
 /** Per-category points for the finished scan. Only the categories that
  * completed appear — a category that did not report has no score. */
+/**
+ * Points per category. Every completed category appears: one that is completed
+ * but absent here falls back to its full cap, which would quietly contradict
+ * the headline. `deployment` is the only one missing, and only because it
+ * failed and therefore earned nothing.
+ *
+ * These sum to DEMO_SCORE. Keep it that way — the demo is the first thing
+ * anyone sees, and a chart disagreeing with its own total reads as a bug in
+ * the product rather than in the fixture.
+ */
 const DEMO_CATEGORY_SCORES: Record<string, number> = {
   security: 14,
   reliability: 16,
   architecture: 17,
+  observability: 8,
   scalability: 3,
 };
+
+const DEMO_SCORE = Object.values(DEMO_CATEGORY_SCORES).reduce((a, b) => a + b, 0);
 
 interface ScanRecord {
   id: string;
@@ -123,7 +150,7 @@ function toSummary(record: ScanRecord): ScanSummary {
     return {
       ...base,
       status: 'completed',
-      score: 68,
+      score: DEMO_SCORE,
       scoring_version: 'v1',
       category_status: DEMO_CATEGORY_STATUS,
       category_scores: DEMO_CATEGORY_SCORES,

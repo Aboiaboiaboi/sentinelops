@@ -58,4 +58,50 @@ describe('CategoryBreakdownChart', () => {
     render(<CategoryBreakdownChart categories={[]} />);
     expect(screen.getByText(/No categories to display yet/)).toBeInTheDocument();
   });
+
+  describe('legend', () => {
+    const allCompleted = toCategoryScores({
+      category_status: { security: 'completed', deployment: 'completed' },
+      category_scores: { security: 25, deployment: 10 },
+      category_max_scores: { security: 25, deployment: 15 },
+    });
+
+    it('does not claim a scan is still scanning once it has finished', () => {
+      /* The amber swatch carries an infinite pulse. Rendered unconditionally,
+         it kept breathing under a completed scan — advertising a state the
+         scan was not in. */
+      render(<CategoryBreakdownChart categories={allCompleted} />);
+
+      expect(screen.queryByText('Still scanning')).not.toBeInTheDocument();
+    });
+
+    it('omits the legend entirely when every bar looks the same', () => {
+      /* One state means no colour encoding to decode; the captions carry it. */
+      render(<CategoryBreakdownChart categories={allCompleted} />);
+
+      expect(screen.queryByText('Reported')).not.toBeInTheDocument();
+    });
+
+    it('shows only the states actually on the chart', () => {
+      const scanning = toCategoryScores({
+        category_status: { security: 'completed', observability: 'pending' },
+        category_scores: { security: 25 },
+        category_max_scores: { security: 25, observability: 10 },
+      });
+
+      render(<CategoryBreakdownChart categories={scanning} />);
+
+      expect(screen.getByText('Reported')).toBeInTheDocument();
+      expect(screen.getByText('Still scanning')).toBeInTheDocument();
+      expect(screen.queryByText('Not reported')).not.toBeInTheDocument();
+    });
+
+    it('still explains all three when all three are present', () => {
+      render(<CategoryBreakdownChart categories={allStates} />);
+
+      expect(screen.getByText('Reported')).toBeInTheDocument();
+      expect(screen.getByText('Still scanning')).toBeInTheDocument();
+      expect(screen.getByText('Not reported')).toBeInTheDocument();
+    });
+  });
 });
