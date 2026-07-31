@@ -18,6 +18,7 @@ proportionate until then.
 import asyncio
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -124,6 +125,22 @@ def _git_environment() -> dict[str, str]:
         # no size limit and no relevance to reading source files.
         "GIT_LFS_SKIP_SMUDGE": "1",
     }
+
+
+# The userinfo portion of a URL — `scheme://anything@host`. An installation
+# token reaches git through a header rather than the URL, so this should never
+# match on our own clones; it exists because "should never" is not a control,
+# and a user-supplied URL can carry credentials of its own.
+_URL_CREDENTIALS = re.compile(r"(?P<scheme>[a-zA-Z][\w+.-]*://)[^/\s@]*@")
+
+
+def redact_credentials(text: str) -> str:
+    """Mask anything that looks like a credential in a URL.
+
+    Applied to git's stderr before it goes anywhere — including the worker log,
+    which is the one place it *is* kept.
+    """
+    return _URL_CREDENTIALS.sub(r"\g<scheme>***@", text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,11 +327,18 @@ def clone_repository(
         raise CloneTimedOut(f"Cloning took longer than {limits.timeout_seconds}s.") from exc
 
     if result.returncode != 0:
-        # git's stderr can echo the URL, which for a private repository would
-        # carry a token in some formats. Only the last line is kept and it is
-        # never returned to the API — it goes to the worker log.
-        detail = (result.stderr or "").strip().splitlines()
-        raise CloneFailed(detail[-1] if detail else "git clone failed")
+        # Full stderr, redacted, rather than the last line alone.
+        #
+        # Keeping one line looked like a safety measure and was not: the last
+        # line can carry a URL just as easily as any other, while throwing away
+        # the line that says *why*. git puts the diagnosis in the middle —
+        # "does not appear to be a git repository" — and ends with generic
+        # advice, so truncating left every local failure unclassifiable.
+        #
+        # The actual control is two-part: credentials are stripped here, and
+        # nothing derived from this text is ever persisted (see
+        # classify_clone_failure, which reads it and stores fixed text).
+        raise CloneFailed(redact_credentials(result.stderr or "").strip() or "git clone failed")
 
     return _measure_tree(destination, limits)
 

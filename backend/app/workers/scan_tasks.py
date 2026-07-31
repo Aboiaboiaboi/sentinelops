@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import SessionLocal
-from app.models import SCAN_CATEGORIES, CategoryStatus
+from app.models import SCAN_CATEGORIES, CategoryStatus, ScanErrorCategory
 from app.scanners import registry
 from app.scanners.base import RepositoryIndex, ScanFinding
 from app.scanners.framework import detect_framework
@@ -32,7 +32,13 @@ from app.services.github_app_service import (
     get_github_app_auth,
     git_credential_header,
 )
-from app.workers.repo import CloneError, cloned_repository, read_head_commit
+from app.workers.repo import (
+    CloneError,
+    CloneTimedOut,
+    CloneTooLarge,
+    cloned_repository,
+    read_head_commit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +107,80 @@ async def resolve_credential(
     return None
 
 
+# Substrings git uses for each cause, checked against stderr in order.
+#
+# Read to classify, never stored. git's stderr can echo the clone URL, and for
+# a private repository that URL carries an installation token — so what is
+# persisted is the fixed detail below, chosen by the match, and never the text
+# that produced it.
+#
+# "not found" covers both a missing repository and a private one we lack access
+# to: GitHub deliberately answers identically for the two, so that they cannot
+# be used to probe which private repositories exist. The hint for that category
+# says so rather than guessing.
+_CLONE_FAILURE_SIGNATURES: tuple[tuple[str, ScanErrorCategory], ...] = (
+    # Credentials were supplied and *refused*. Only these are authentication
+    # failures, and the distinction is not pedantic: it decides whether the
+    # advice is "connect GitHub" or "check the URL".
+    ("authentication failed", ScanErrorCategory.AUTHENTICATION),
+    ("permission denied", ScanErrorCategory.AUTHENTICATION),
+    ("403", ScanErrorCategory.AUTHENTICATION),
+    # git wanted credentials and had none. Found by scanning a repository that
+    # genuinely did not exist and watching it come back as "authentication":
+    # GitHub answers 404 identically for a missing repository and a private one
+    # you cannot see — deliberately, so the API cannot be used to probe which
+    # private repositories exist — and git responds by asking for a username.
+    # So this says nothing about credentials being wrong, and the honest
+    # category is the one whose wording already covers both cases.
+    ("could not read username", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("could not read password", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("terminal prompts disabled", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("repository not found", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("not found", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("does not appear to be a git repository", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("repository does not exist", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("the repository exists", ScanErrorCategory.REPOSITORY_NOT_FOUND),
+    ("could not resolve host", ScanErrorCategory.NETWORK_UNREACHABLE),
+    ("failed to connect", ScanErrorCategory.NETWORK_UNREACHABLE),
+    ("connection timed out", ScanErrorCategory.NETWORK_UNREACHABLE),
+    ("unable to access", ScanErrorCategory.NETWORK_UNREACHABLE),
+)
+
+# The detail persisted for each category. Fixed text, so nothing a repository
+# or a git remote can influence ever reaches the database.
+_ERROR_DETAILS: dict[ScanErrorCategory, str] = {
+    ScanErrorCategory.REPOSITORY_NOT_FOUND: (
+        "No repository was found at that URL, or it is private and this account has not "
+        "been granted access to it."
+    ),
+    ScanErrorCategory.AUTHENTICATION: (
+        "The repository refused access with the credentials available for this account."
+    ),
+    ScanErrorCategory.NETWORK_UNREACHABLE: "The repository host could not be reached.",
+    ScanErrorCategory.CLONE_FAILED: "The repository could not be cloned.",
+    ScanErrorCategory.INTERNAL: "The scan stopped because of an unexpected error.",
+}
+
+
+def classify_clone_failure(error: CloneError) -> tuple[ScanErrorCategory, str]:
+    """Map a clone failure to a stored category and a safe detail.
+
+    `CloneTooLarge` and `CloneTimedOut` carry messages this codebase wrote, so
+    their text is safe to keep and is more useful than a fixed sentence — it
+    names the limit that was hit. `CloneFailed` carries git's, which is not.
+    """
+    if isinstance(error, CloneTooLarge):
+        return ScanErrorCategory.REPOSITORY_TOO_LARGE, str(error)
+    if isinstance(error, CloneTimedOut):
+        return ScanErrorCategory.TIMEOUT, str(error)
+
+    haystack = str(error).lower()
+    for signature, category in _CLONE_FAILURE_SIGNATURES:
+        if signature in haystack:
+            return category, _ERROR_DETAILS[category]
+    return ScanErrorCategory.CLONE_FAILED, _ERROR_DETAILS[ScanErrorCategory.CLONE_FAILED]
+
+
 async def run_scan(ctx: dict[str, Any], scan_id: str) -> None:
     """arq entrypoint. Opens a session and delegates.
 
@@ -121,7 +201,12 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
     target = await scan_service.get_scan_target(db, scan_id=scan_id)
     if target is None:
         logger.warning("scan has no project", extra={"scan_id": str(scan_id)})
-        await scan_service.fail_scan(db, scan_id=scan_id)
+        await scan_service.fail_scan(
+            db,
+            scan_id=scan_id,
+            category=ScanErrorCategory.INTERNAL.value,
+            detail=_ERROR_DETAILS[ScanErrorCategory.INTERNAL],
+        )
         return
 
     logger.info(
@@ -153,19 +238,30 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
         # Not re-raised. A repository that cannot be cloned will not clone on a
         # retry either — the URL is wrong, private, or the repo is too large —
         # so retrying only burns a worker slot to reach the same conclusion.
+        category, detail = classify_clone_failure(exc)
+        # str(exc) goes to the log and no further: it is git's stderr, which can
+        # echo a URL carrying an installation token. `detail` is fixed text.
         logger.warning(
             "scan failed to clone repository",
-            extra={"scan_id": str(scan_id), "reason": str(exc)},
+            extra={"scan_id": str(scan_id), "category": category.value, "reason": str(exc)},
         )
-        await scan_service.fail_scan(db, scan_id=scan_id)
+        await scan_service.fail_scan(db, scan_id=scan_id, category=category.value, detail=detail)
         return
     except Exception:
         # Anything else is unexpected and may well be transient, so the scan is
         # marked failed and the exception is re-raised for arq to retry. The
         # retry finds the scan unclaimable and stops, which is the intended
         # outcome — the failure is recorded rather than silently swallowed.
+        #
+        # The exception text is deliberately not stored: an internal error can
+        # carry anything, including a connection string.
         logger.exception("scan failed", extra={"scan_id": str(scan_id)})
-        await scan_service.fail_scan(db, scan_id=scan_id)
+        await scan_service.fail_scan(
+            db,
+            scan_id=scan_id,
+            category=ScanErrorCategory.INTERNAL.value,
+            detail=_ERROR_DETAILS[ScanErrorCategory.INTERNAL],
+        )
         raise
 
     category_scores = scoring_service.score_by_category(findings, category_status)

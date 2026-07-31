@@ -58,6 +58,16 @@ export interface ScanSummary {
    * weight table. */
   category_max_scores: Partial<Record<string, number>>;
   /**
+   * Why a failed scan failed. Null unless `status` is 'failed', and null for
+   * scans that failed before this was recorded.
+   *
+   * `error_hint` is derived by the API from the category rather than stored,
+   * so it is always present alongside one.
+   */
+  error_category: string | null;
+  error_detail: string | null;
+  error_hint: string | null;
+  /**
    * The commit this scan looked at. All null together when the repository had
    * no commits, or for scans recorded before this was captured.
    *

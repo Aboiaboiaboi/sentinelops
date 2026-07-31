@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from app.models.scan import CategoryStatus, ScanStatus
+from app.models.scan import SCAN_ERROR_HINTS, CategoryStatus, ScanStatus
 from app.schemas.common import UtcDatetime
 from app.services.scoring_service import CATEGORY_WEIGHTS
 
@@ -34,6 +34,11 @@ class ScanRead(BaseModel):
     # the total — a category worth 20 that lost 3 still drew a full bar.
     category_scores: dict[str, int]
 
+    # Why a failed scan failed. Null for anything that has not failed, and for
+    # scans that failed before this was recorded.
+    error_category: str | None
+    error_detail: str | None
+
     # The commit this scan looked at. All null together when the checkout had
     # no HEAD — an empty repository — or for scans that predate the field.
     # Present rather than omitted, same reason as `score`.
@@ -43,6 +48,19 @@ class ScanRead(BaseModel):
     committed_at: UtcDatetime | None
 
     created_at: UtcDatetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def error_hint(self) -> str | None:
+        """What to try, derived from the category rather than stored.
+
+        The advice is a property of the failure kind, not of one scan, so
+        keeping it out of the row means improving the wording does not need a
+        migration and cannot leave old scans quoting stale advice.
+        """
+        if self.error_category is None:
+            return None
+        return SCAN_ERROR_HINTS.get(self.error_category)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

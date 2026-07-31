@@ -1,11 +1,12 @@
 import { Link, useParams } from 'react-router-dom';
-import { FileText, TriangleAlert } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryBreakdownChart } from '@/components/CategoryBreakdownChart';
 import { CommitContext } from '@/components/CommitContext';
+import { ScanFailure } from '@/components/ScanFailure';
 import { FindingsList } from '@/components/FindingsList';
 import { ScanStatusBadge } from '@/components/ScanStatusBadge';
 import { ScoreGauge } from '@/components/ScoreGauge';
@@ -108,14 +109,7 @@ export default function ScanPage() {
         </div>
       </div>
 
-      {scan.status === 'failed' && (
-        <Alert variant="destructive">
-          <TriangleAlert />
-          <AlertDescription>
-            This scan failed before it could produce a score.
-          </AlertDescription>
-        </Alert>
-      )}
+      <ScanFailure scan={scan} />
 
       {/* Three metric cards, per the frontend spec. The third flags an
           incomplete scan rather than quietly presenting a partial score as whole. */}

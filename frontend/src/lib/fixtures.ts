@@ -146,9 +146,19 @@ function toSummary(record: ScanRecord): ScanSummary {
     committed_at: null,
   };
 
+  // Fixture scans never fail — the demo exercises the happy path — so the
+  // failure fields are always null. They are spread rather than omitted
+  // because the client's type has no optional keys.
+  const noFailure = {
+    error_category: null,
+    error_detail: null,
+    error_hint: null,
+  };
+
   if (elapsed >= SIMULATED_SCAN_MS) {
     return {
       ...base,
+      ...noFailure,
       status: 'completed',
       score: DEMO_SCORE,
       scoring_version: 'v1',
@@ -166,6 +176,7 @@ function toSummary(record: ScanRecord): ScanSummary {
   return {
     ...base,
     ...noCommit,
+    ...noFailure,
     status: 'running',
     score: null,
     scoring_version: null,

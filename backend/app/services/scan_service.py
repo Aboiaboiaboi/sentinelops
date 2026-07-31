@@ -19,7 +19,16 @@ from sqlalchemy import Text, cast, func, select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import SCAN_CATEGORIES, CategoryStatus, Finding, Project, Scan, ScanStatus, User
+from app.models import (
+    SCAN_CATEGORIES,
+    CategoryStatus,
+    Finding,
+    Project,
+    Scan,
+    ScanErrorCategory,
+    ScanStatus,
+    User,
+)
 from app.scanners.base import ScanFinding
 from app.utils.queue import get_queue
 
@@ -80,7 +89,12 @@ async def create_scan(db: AsyncSession, *, owner: User, project_id: uuid.UUID) -
         # says so, and re-raising tells the caller the system is degraded rather
         # than handing back a scan that will never run.
         logger.exception("failed to queue scan", extra={"scan_id": str(scan.id)})
-        await fail_scan(db, scan_id=scan.id)
+        await fail_scan(
+            db,
+            scan_id=scan.id,
+            category=ScanErrorCategory.INTERNAL.value,
+            detail="The scan could not be queued for processing.",
+        )
         raise
 
     return scan
@@ -298,7 +312,13 @@ async def record_commit_context(
     await db.commit()
 
 
-async def fail_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> bool:
+async def fail_scan(
+    db: AsyncSession,
+    *,
+    scan_id: uuid.UUID,
+    category: str | None = None,
+    detail: str | None = None,
+) -> bool:
     """Mark a scan failed, returning whether it was still in flight.
 
     Accepts `pending` as well as `running`: a job can die between being queued
@@ -306,11 +326,35 @@ async def fail_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> bool:
 
     `score` is deliberately left null. A failed scan has no score, and writing a
     zero would be indistinguishable from a genuinely terrible repository.
+
+    `category` and `detail` say why, so the UI can explain the failure instead
+    of showing a dead end. `detail` must be built from the exception type by
+    the caller — never from git's stderr, which can echo a URL carrying an
+    installation token.
     """
+    # Categories still pending never ran and never will: a failed scan is
+    # terminal. Left as `pending` they render as "Scanning…" forever, pulsing
+    # under a dead scan — the same lie a completed scan would tell, and the
+    # invariant is the same one: nothing terminal is still scanning.
+    #
+    # Entries already `completed` are preserved. A scan can fail *after* some
+    # categories reported (the internal-error path), and discarding their
+    # results would be a second untruth.
+    current = await db.scalar(select(Scan.category_status).where(Scan.id == scan_id))
+    settled = {
+        name: (status if status == CategoryStatus.COMPLETED.value else CategoryStatus.FAILED.value)
+        for name, status in (current or {}).items()
+    }
+
     result = await db.execute(
         update(Scan)
         .where(Scan.id == scan_id, Scan.status.in_((ScanStatus.PENDING, ScanStatus.RUNNING)))
-        .values(status=ScanStatus.FAILED)
+        .values(
+            status=ScanStatus.FAILED,
+            error_category=category,
+            error_detail=detail,
+            category_status=settled,
+        )
     )
     await db.commit()
     return result.rowcount == 1

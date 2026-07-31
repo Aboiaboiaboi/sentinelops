@@ -20,6 +20,62 @@ class ScanStatus(enum.StrEnum):
     FAILED = "failed"
 
 
+class ScanErrorCategory(enum.StrEnum):
+    """Why a scan failed, in terms a user can act on.
+
+    Stored in a plain String column rather than a Postgres enum, for the same
+    reason SCAN_CATEGORIES is not one: this list will grow (Phase 3's sandbox
+    failures are not here yet) and adding a value should not need a migration.
+    It also sidesteps the enum-drop trap — Alembic never generates the DROP TYPE
+    for a Postgres enum, so a downgrade leaves an orphan behind that makes the
+    next upgrade fail.
+    """
+
+    REPOSITORY_NOT_FOUND = "repository_not_found"
+    AUTHENTICATION = "authentication"
+    NETWORK_UNREACHABLE = "network_unreachable"
+    REPOSITORY_TOO_LARGE = "repository_too_large"
+    TIMEOUT = "timeout"
+    CLONE_FAILED = "clone_failed"
+    INTERNAL = "internal"
+
+
+# What to tell someone for each cause. Kept beside the enum so a new category
+# cannot be added without deciding what advice goes with it.
+SCAN_ERROR_HINTS: dict[str, str] = {
+    ScanErrorCategory.REPOSITORY_NOT_FOUND: (
+        "Check the URL for typos. If the repository is private, connect GitHub and grant "
+        "access to it — a private repository is indistinguishable from a missing one until "
+        "you do."
+    ),
+    ScanErrorCategory.AUTHENTICATION: (
+        "The repository exists but access was refused. Connect GitHub from the dashboard, "
+        "or use Manage access to include this repository in what you have granted."
+    ),
+    ScanErrorCategory.NETWORK_UNREACHABLE: (
+        "The host could not be reached. This is usually temporary — try the scan again in "
+        "a few minutes."
+    ),
+    ScanErrorCategory.REPOSITORY_TOO_LARGE: (
+        "The repository exceeds the size limits a scan will accept. Scanning a smaller "
+        "repository, or one without large committed binaries, will work."
+    ),
+    ScanErrorCategory.TIMEOUT: (
+        "Cloning took longer than the time limit. A large repository or a slow network can "
+        "cause this; trying again often succeeds."
+    ),
+    ScanErrorCategory.CLONE_FAILED: (
+        "The repository could not be cloned. Check that the URL points at a git repository "
+        "that exists and is reachable."
+    ),
+    ScanErrorCategory.INTERNAL: (
+        "Something went wrong on our side rather than with your repository. Running the "
+        "scan again is worth trying; if it keeps failing, the repository may be hitting an "
+        "edge case worth reporting."
+    ),
+}
+
+
 class CategoryStatus(enum.StrEnum):
     """Per-category outcome inside `category_status`.
 
@@ -90,6 +146,15 @@ class Scan(Base):
     category_scores: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
+
+    # Why a failed scan failed. Null for anything that has not failed.
+    #
+    # `error_detail` is built from the *exception type*, never from git's
+    # stderr: stderr can echo the clone URL, and for a private repository that
+    # URL carries an installation token. stderr is read to classify the failure
+    # and then discarded — it reaches the worker log and nothing else.
+    error_category: Mapped[str | None] = mapped_column(String(40), default=None)
+    error_detail: Mapped[str | None] = mapped_column(String(500), default=None)
 
     # The HEAD commit the scan actually looked at. All nullable together: a
     # repository with no commits has no HEAD, and commit context is an extra on
