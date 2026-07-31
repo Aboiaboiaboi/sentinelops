@@ -7,7 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { GitHubConnection } from '@/components/GitHubConnection';
+import { RepositoryPicker } from '@/components/RepositoryPicker';
 import { useCreateProject, useDeleteProject, useProjects } from '@/hooks/useProjects';
+import type { GitHubRepository } from '@/types/github';
 
 export default function DashboardPage() {
   const { data: projects, isPending, isError, error } = useProjects();
@@ -15,8 +18,16 @@ export default function DashboardPage() {
   const deleteProject = useDeleteProject();
 
   const [showForm, setShowForm] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const [name, setName] = useState('');
   const [repositoryUrl, setRepositoryUrl] = useState('');
+
+  function handlePick(repository: GitHubRepository) {
+    setRepositoryUrl(repository.url);
+    // The repo name is a better default than an empty box, and still editable.
+    if (!name) setName(repository.full_name.split('/')[1]);
+    setShowPicker(false);
+  }
 
   function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -46,6 +57,8 @@ export default function DashboardPage() {
         </Button>
       </div>
 
+      <GitHubConnection />
+
       {showForm && (
         <Card>
           <CardHeader>
@@ -63,7 +76,17 @@ export default function DashboardPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="repo">Repository URL</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="repo">Repository URL</Label>
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto p-0 text-xs"
+                    onClick={() => setShowPicker((open) => !open)}
+                  >
+                    {showPicker ? 'Enter a URL instead' : 'Choose from GitHub'}
+                  </Button>
+                </div>
                 <Input
                   id="repo"
                   type="url"
@@ -72,6 +95,7 @@ export default function DashboardPage() {
                   value={repositoryUrl}
                   onChange={(e) => setRepositoryUrl(e.target.value)}
                 />
+                <RepositoryPicker open={showPicker} onPick={handlePick} />
               </div>
 
               {createProject.isError && (

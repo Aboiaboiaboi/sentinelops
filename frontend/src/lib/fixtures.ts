@@ -13,6 +13,7 @@
  */
 import { ApiError } from '@/api/client';
 import type { Finding } from '@/types/finding';
+import type { GitHubInstallation, GitHubRepository } from '@/types/github';
 import type { CreateProjectInput, Project } from '@/types/project';
 import type { CategoryStatusMap, ScanSummary } from '@/types/scan';
 
@@ -217,6 +218,34 @@ export const store = {
 
   listFindings: (scanId: string) =>
     delay(isFinished(scanId) ? [...fixtureFindings] : []),
+
+  // A connected account with one private and one public repository, so the
+  // picker and its private badge are visible without a GitHub App configured.
+  listInstallations: (): Promise<GitHubInstallation[]> =>
+    delay([
+      {
+        id: 'inst_demo',
+        installation_id: 42424242,
+        account_login: 'octocat',
+        created_at: new Date().toISOString(),
+      },
+    ]),
+
+  listRepositories: (): Promise<GitHubRepository[]> =>
+    delay([
+      {
+        full_name: 'octocat/internal-billing',
+        private: true,
+        url: 'https://github.com/octocat/internal-billing.git',
+        installation_id: 42424242,
+      },
+      {
+        full_name: 'octocat/public-docs',
+        private: false,
+        url: 'https://github.com/octocat/public-docs.git',
+        installation_id: 42424242,
+      },
+    ]),
 };
 
 /** The seeded finished scan. Exported for tests and direct inspection. */
