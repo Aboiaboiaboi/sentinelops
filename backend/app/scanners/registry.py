@@ -14,6 +14,7 @@ from app.scanners.base import Scanner
 from app.scanners.deployment import DeploymentScanner
 from app.scanners.observability import ObservabilityScanner
 from app.scanners.reliability import ReliabilityScanner
+from app.scanners.scalability import ScalabilityScanner
 
 # Populated as each scanner lands. The pipeline handles a category with no entry
 # by recording it as unreported, which costs its full weight — honest, since
@@ -23,6 +24,7 @@ SCANNERS: dict[str, Scanner] = {
     DeploymentScanner.category: DeploymentScanner(),
     ReliabilityScanner.category: ReliabilityScanner(),
     ObservabilityScanner.category: ObservabilityScanner(),
+    ScalabilityScanner.category: ScalabilityScanner(),
 }
 
 

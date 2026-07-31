@@ -21,27 +21,33 @@ wrong, why it matters, and what to do about it.
 
 You give it a repository URL. A few seconds later you get something like this:
 
-```
-sentinelops-api                                    41 / 100    Grade F
-4 of 6 categories reported
+Here is SentinelOps scanning **itself**, which is the real output of the
+commands below rather than an illustration:
 
-  Architecture     17 / 20   ████████████████░░░░
-  Reliability      16 / 20   ████████████████░░░░
-  Deployment        4 / 15   ████░░░░░░░░░░░░░░░░
-  Observability     4 / 10   ████████░░░░░░░░░░░░
+```
+sentinelops                                        67 / 100    Grade D
+5 of 6 categories reported
+
+  Architecture     20 / 20   ████████████████████
+  Reliability      20 / 20   ████████████████████
+  Scalability      10 / 10   ████████████████████
+  Deployment       11 / 15   ██████████████░░░░░░
+  Observability     6 / 10   ████████████░░░░░░░░
   Security          not assessed
-  Scalability       not assessed
 ```
 
 Each finding tells you what it found and what to do:
 
-> **No deployment configuration** · HIGH · −11
-> No Dockerfile, Compose file, or Kubernetes manifest was found. Nothing in the
-> repository describes how the service is packaged or run, so how it reaches an
-> environment lives only in somebody's shell history.
+> **No metrics or error tracking** · MEDIUM · −4
+> No metrics, tracing, or error-reporting library was found. Nothing measures
+> latency, error rate or throughput, and no exception is reported anywhere — so
+> the first notice that the service is broken comes from whoever is using it.
 >
-> **Recommendation:** Add a Dockerfile describing how the service is built and
-> started, so the same artefact runs locally and in every environment.
+> **Recommendation:** Export a handful of metrics that describe user-visible
+> health, and send unhandled exceptions to an error tracker so they are seen
+> without being hunted.
+
+Both of its findings are fair, and both are on the roadmap below.
 
 It **reads** code and configuration. It never runs the repository, deploys
 anything, or changes it.
@@ -145,7 +151,7 @@ Six categories, weighted to sum to 100:
 | **Architecture** | 20 | ✅ | tests, dependency locking, file size, layout, documentation |
 | **Deployment** | 15 | ✅ | Dockerfile, image pinning, non-root user, healthcheck, CI |
 | **Observability** | 10 | ✅ | logging, structured output, metrics and error tracking |
-| **Scalability** | 10 | ⬜ planned | statelessness, caching, connection pooling |
+| **Scalability** | 10 | ✅ | in-memory state, local file storage, connection pooling |
 
 ### Why scores look low right now
 
@@ -153,8 +159,8 @@ A category that has no scanner yet **contributes nothing** — it isn't quietly
 excluded from the total. A scan that assessed a third of the rubric shouldn't
 look like a thorough one.
 
-Two categories are still unbuilt, so **the current maximum is 65 / 100**. That
-number goes up as scanners land, not because the checks got easier.
+Security is still unbuilt, so **the current maximum is 75 / 100**. That number
+goes up as scanners land, not because the checks got easier.
 
 ### It tries hard not to cry wolf
 
@@ -226,7 +232,7 @@ never readable from JavaScript.
 ### Running the checks
 
 ```bash
-# Backend — 405 tests. Needs Postgres running.
+# Backend — 462 tests. Needs Postgres running.
 cd backend
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
@@ -349,12 +355,13 @@ endpoints are rate limited.
 ## Roadmap
 
 - [x] **Foundation** — auth, database, API, Docker
-- [ ] **Scanning engine** — 4 of 6 scanners built; scalability, baseline
-      security, and private repositories remain
+- [ ] **Scanning engine** — 5 of 6 scanners built; baseline security and
+      private repositories remain
 - [ ] **Security tooling** — Gitleaks, Trivy, Semgrep, OSV, each in its own
       sandbox
 - [ ] **Reporting** — PDF export
-- [ ] **Production deployment** — CI/CD and cloud hosting
+- [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
+      Cloud Run
 
 Private repositories will use a GitHub App rather than stored access tokens, so
 credentials expire hourly and are never persisted.

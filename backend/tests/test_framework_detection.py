@@ -127,3 +127,70 @@ class TestPolyglot:
         _write(tmp_path, "package.json", json.dumps({"dependencies": {"react": "^18"}}))
 
         assert detect_framework(tmp_path) == "Django"
+
+
+class TestMonorepoLayout:
+    """A workspace root beside `backend/` and `frontend/` is the ordinary shape
+    for the applications this tool assesses, and its root manifest usually names
+    no framework at all. Found by scanning tiangolo/full-stack-fastapi-template,
+    which reported "Python" while FastAPI sat in backend/pyproject.toml —
+    leaving `is_service` False and silently skipping every service-only check in
+    reliability, observability and scalability.
+    """
+
+    def test_finds_a_framework_in_a_component_directory(self, tmp_path: Path) -> None:
+        _write(tmp_path, "pyproject.toml", "[tool.copier]\nname = 'template'\n")
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        _write(backend, "pyproject.toml", "dependencies = ['fastapi']\n")
+
+        assert detect_framework(tmp_path) == "FastAPI"
+
+    @pytest.mark.parametrize("directory", ["backend", "server", "api", "service", "app", "src"])
+    def test_recognises_the_conventional_names(self, tmp_path: Path, directory: str) -> None:
+        component = tmp_path / directory
+        component.mkdir()
+        _write(component, "requirements.txt", "django==5.0\n")
+
+        assert detect_framework(tmp_path) == "Django"
+
+    def test_the_root_still_wins_when_it_names_a_framework(self, tmp_path: Path) -> None:
+        """A real root manifest is the better answer; the nested pass is a
+        fallback, not a competitor."""
+        _write(tmp_path, "requirements.txt", "flask==3.0\n")
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        _write(backend, "requirements.txt", "django==5.0\n")
+
+        assert detect_framework(tmp_path) == "Flask"
+
+    def test_a_language_only_root_is_kept_when_nothing_nested_is_better(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path, "pyproject.toml", "[project]\nname = 'tool'\n")
+
+        assert detect_framework(tmp_path) == "Python"
+
+    def test_still_does_not_descend_into_unconventional_directories(self, tmp_path: Path) -> None:
+        """The fallback is a fixed list of names, not a search."""
+        _write(tmp_path, "pyproject.toml", "[project]\nname = 'tool'\n")
+        examples = tmp_path / "examples"
+        examples.mkdir()
+        _write(examples, "requirements.txt", "fastapi\n")
+
+        assert detect_framework(tmp_path) == "Python"
+
+    def test_component_symlinks_are_not_followed(self, tmp_path: Path) -> None:
+        """A repository is untrusted input and can link anywhere."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _write(outside, "requirements.txt", "fastapi\n")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _write(repo, "pyproject.toml", "[project]\nname = 'tool'\n")
+        try:
+            (repo / "backend").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlink creation requires privileges on this platform")
+
+        assert detect_framework(repo) == "Python"

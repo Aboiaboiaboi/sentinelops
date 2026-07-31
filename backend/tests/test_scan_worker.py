@@ -222,14 +222,18 @@ class TestExecuteScan:
         observability checks are service-only and it is detected as plain
         Python. Reliability scores full marks for the same reason: no health
         check is expected of a library, and it makes no outbound calls and
-        swallows no errors.
+        swallows no errors. Scalability scores full marks because every one of
+        its checks is service-only, so a library reports nothing.
+
+        Security is the only category with no scanner, so it alone stays
+        unreported and costs its full weight of 25.
         """
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
-        assert finished.score == 34
+        assert finished.score == 44
         assert finished.scoring_version == "v1"
 
     async def test_records_what_each_category_scored(
@@ -247,6 +251,7 @@ class TestExecuteScan:
             "deployment": 0,
             "reliability": 20,
             "observability": 4,
+            "scalability": 10,
         }
         assert sum(finished.category_scores.values()) == finished.score
 

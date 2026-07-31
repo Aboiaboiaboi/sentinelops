@@ -140,15 +140,52 @@ _DETECTORS: tuple[Callable[[Path], str | None], ...] = (
 )
 
 
-def detect_framework(repo_path: Path) -> str | None:
-    """Name the stack, or None if nothing recognisable is at the root.
+# Language names, as opposed to framework names. Returned when a manifest exists
+# but names nothing recognisable, and the signal that it is worth looking one
+# level down before settling for it.
+_LANGUAGE_ONLY = frozenset({"Python", "Node.js", "Go", "Rust", "Java", "Ruby", "PHP", ".NET"})
 
-    Only the repository root is examined. Descending would find a manifest in
-    some example directory or vendored dependency and report that instead, and
-    None is a more useful answer than a confidently wrong one.
-    """
+# Where a service's manifest lives when the repository root belongs to the
+# workspace rather than to any one component. Named directories only, one level
+# deep: descending freely would find a manifest in an example or a fixture and
+# report that instead.
+_COMPONENT_DIRECTORIES = ("backend", "server", "api", "service", "app", "src")
+
+
+def _detect_at(path: Path) -> str | None:
     for detect in _DETECTORS:
-        framework = detect(repo_path)
+        framework = detect(path)
         if framework is not None:
             return framework
     return None
+
+
+def detect_framework(repo_path: Path) -> str | None:
+    """Name the stack, or None if nothing recognisable can be found.
+
+    The root is examined first and wins whenever it names an actual framework.
+    Only when the root says nothing more specific than a language does this look
+    one level down, into conventionally named component directories.
+
+    That second pass exists because a monorepo — `backend/` beside `frontend/` —
+    is the ordinary shape for the kind of application this assesses, and its
+    root manifest is usually workspace configuration naming no framework at all.
+    On tiangolo/full-stack-fastapi-template the root reported "Python" while the
+    FastAPI dependency sat in backend/pyproject.toml, so `is_service` was False
+    and every service-only check across three categories quietly skipped.
+    """
+    root = _detect_at(repo_path)
+    if root is not None and root not in _LANGUAGE_ONLY:
+        return root
+
+    for name in _COMPONENT_DIRECTORIES:
+        candidate = repo_path / name
+        # Symlinks are not followed: a repository is untrusted input and may
+        # link anywhere on the filesystem.
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        nested = _detect_at(candidate)
+        if nested is not None and nested not in _LANGUAGE_ONLY:
+            return nested
+
+    return root
