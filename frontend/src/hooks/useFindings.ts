@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { listFindings } from '@/api/findings';
+import { listChecks, listFindings } from '@/api/findings';
 import { USE_FIXTURES, store } from '@/lib/fixtures';
 import { SEVERITY_ORDER, type Finding } from '@/types/finding';
 
 export const findingKeys = {
   forScan: (scanId: string) => ['scans', scanId, 'findings'] as const,
+  checksForScan: (scanId: string) => ['scans', scanId, 'checks'] as const,
 };
 
 /**
@@ -24,5 +25,20 @@ export function useFindings(scanId: string | undefined, enabled = true) {
           SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] ||
           b.score_impact - a.score_impact,
       ),
+  });
+}
+
+/**
+ * Check outcomes, fetched only once somebody asks for them.
+ *
+ * `enabled` is the whole point: this is detail behind a disclosure, so it must
+ * not ride along with every poll of a running scan.
+ */
+export function useChecks(scanId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: findingKeys.checksForScan(scanId ?? ''),
+    queryFn: () =>
+      USE_FIXTURES ? store.listChecks(scanId as string) : listChecks(scanId as string),
+    enabled: Boolean(scanId) && enabled,
   });
 }

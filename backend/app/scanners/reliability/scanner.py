@@ -11,9 +11,23 @@ a confident false positive teaches people to ignore the whole category.
 import re
 from pathlib import Path
 
-from app.scanners.base import RepositoryIndex, ScanFinding, Severity
+from app.scanners.base import (
+    CheckResult,
+    CheckSpec,
+    RepositoryIndex,
+    ScanFinding,
+    Severity,
+    failed,
+    passed,
+    skipped,
+)
 
 CATEGORY = "reliability"
+
+_HEALTH = CheckSpec("reliability.health", "Health endpoint")
+_TIMEOUTS = CheckSpec("reliability.timeouts", "Timeouts on outbound calls")
+_SWALLOWED = CheckSpec("reliability.swallowed_errors", "Errors are not discarded")
+_RETRIES = CheckSpec("reliability.retries", "Retry handling")
 
 # Impacts, summing to the category weight of 20.
 _NO_HEALTH_ENDPOINT = 6
@@ -80,8 +94,9 @@ _EMPTY_CATCH = re.compile(r"\bcatch\s*(?:\([^)]*\))?\s*\{\s*\}")
 
 class ReliabilityScanner:
     category = CATEGORY
+    CHECKS = (_HEALTH, _TIMEOUTS, _SWALLOWED, _RETRIES)
 
-    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         # Read each source file once and answer every question from it, rather
         # than four passes over the same text.
         untimed: list[str] = []
@@ -121,12 +136,12 @@ class ReliabilityScanner:
         if not has_health:
             has_health = self._probes_in_manifests(repo)
 
-        findings: list[ScanFinding] = []
-        findings.extend(self._check_health(repo, has_health))
-        findings.extend(self._check_timeouts(untimed))
-        findings.extend(self._check_retries(makes_calls, has_retries))
-        findings.extend(self._check_swallowed(swallowed))
-        return findings
+        return [
+            self._check_health(repo, has_health),
+            self._check_timeouts(makes_calls, untimed),
+            self._check_swallowed(swallowed),
+            self._check_retries(makes_calls, has_retries),
+        ]
 
     def _probes_in_manifests(self, repo: RepositoryIndex) -> bool:
         for path in repo.files:
@@ -137,12 +152,16 @@ class ReliabilityScanner:
                 return True
         return False
 
-    def _check_health(self, repo: RepositoryIndex, has_health: bool) -> list[ScanFinding]:
+    def _check_health(self, repo: RepositoryIndex, has_health: bool) -> CheckResult:
         # Only asked of things that serve traffic. A library answering health
-        # checks would be the odd one out.
-        if has_health or not repo.is_service:
-            return []
-        return [
+        # checks would be the odd one out — and saying "not applicable" is not
+        # the same as saying "fine", which is what an empty list used to mean.
+        if not repo.is_service:
+            return skipped(_HEALTH, "only asked of something that serves traffic")
+        if has_health:
+            return passed(_HEALTH)
+        return failed(
+            _HEALTH,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.HIGH,
@@ -158,14 +177,17 @@ class ReliabilityScanner:
                     "your orchestrator's readiness probe at it."
                 ),
                 score_impact=_NO_HEALTH_ENDPOINT,
-            )
-        ]
+            ),
+        )
 
-    def _check_timeouts(self, untimed: list[str]) -> list[ScanFinding]:
+    def _check_timeouts(self, makes_calls: bool, untimed: list[str]) -> CheckResult:
+        if not makes_calls:
+            return skipped(_TIMEOUTS, "no outbound calls were found to time out")
         if not untimed:
-            return []
+            return passed(_TIMEOUTS)
         others = f" and {len(untimed) - 1} other files" if len(untimed) > 1 else ""
-        return [
+        return failed(
+            _TIMEOUTS,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.HIGH,
@@ -181,14 +203,17 @@ class ReliabilityScanner:
                     "shared client and use it everywhere."
                 ),
                 score_impact=_CALLS_WITHOUT_TIMEOUTS,
-            )
-        ]
+            ),
+        )
 
-    def _check_retries(self, makes_calls: bool, has_retries: bool) -> list[ScanFinding]:
+    def _check_retries(self, makes_calls: bool, has_retries: bool) -> CheckResult:
         # A project that talks to nothing has nothing to retry.
-        if not makes_calls or has_retries:
-            return []
-        return [
+        if not makes_calls:
+            return skipped(_RETRIES, "no outbound calls were found to retry")
+        if has_retries:
+            return passed(_RETRIES)
+        return failed(
+            _RETRIES,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -203,14 +228,15 @@ class ReliabilityScanner:
                     "blindly — a retry storm against a struggling dependency makes it worse."
                 ),
                 score_impact=_NO_RETRY_HANDLING,
-            )
-        ]
+            ),
+        )
 
-    def _check_swallowed(self, swallowed: list[str]) -> list[ScanFinding]:
+    def _check_swallowed(self, swallowed: list[str]) -> CheckResult:
         if not swallowed:
-            return []
+            return passed(_SWALLOWED)
         others = f" and {len(swallowed) - 1} other files" if len(swallowed) > 1 else ""
-        return [
+        return failed(
+            _SWALLOWED,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -225,8 +251,8 @@ class ReliabilityScanner:
                     "exception type when you genuinely intend to continue."
                 ),
                 score_impact=_SWALLOWED_ERRORS,
-            )
-        ]
+            ),
+        )
 
 
 def _is_dockerfile(path: Path) -> bool:

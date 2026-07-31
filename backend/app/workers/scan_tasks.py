@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import SessionLocal
 from app.models import SCAN_CATEGORIES, CategoryStatus, ScanErrorCategory
 from app.scanners import registry
-from app.scanners.base import RepositoryIndex, ScanFinding
+from app.scanners.base import RepositoryIndex, ScanFinding, findings_of
 from app.scanners.framework import detect_framework
 from app.services import github_service, project_service, scan_service, scoring_service
 from app.services.github_app_service import (
@@ -231,7 +231,7 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
             # health endpoint is a problem depends on whether this is a service
             # at all, and only the framework answers that.
             framework = await _detect_and_record_framework(db, target.project_id, repo_path)
-            findings, category_status = await _run_scanners(
+            findings, category_status, checks = await _run_scanners(
                 db, scan_id, repo_path, framework=framework
             )
     except CloneError as exc:
@@ -272,6 +272,7 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
         score=score,
         scoring_version=scoring_service.SCORING_VERSION,
         category_scores=category_scores,
+        check_results=checks,
     )
     logger.info(
         "scan completed",
@@ -334,7 +335,7 @@ async def _detect_and_record_framework(
 
 async def _run_scanners(
     db: AsyncSession, scan_id: uuid.UUID, repo_path: Path, *, framework: str | None
-) -> tuple[list[ScanFinding], dict[str, str]]:
+) -> tuple[list[ScanFinding], dict[str, str], list[dict[str, Any]]]:
     """Run every category, recording each result as it lands.
 
     Results are written per category rather than in one batch at the end, so a
@@ -360,6 +361,7 @@ async def _run_scanners(
 
     findings: list[ScanFinding] = []
     category_status: dict[str, str] = {}
+    checks: list[dict[str, Any]] = []
 
     async def record(category: str, status: CategoryStatus) -> None:
         """Write the result and remember it.
@@ -387,7 +389,7 @@ async def _run_scanners(
         )
         for category in SCAN_CATEGORIES:
             await record(category, CategoryStatus.FAILED)
-        return findings, category_status
+        return findings, category_status, checks
 
     for category in SCAN_CATEGORIES:
         scanner = registry.get_scanner(category)
@@ -399,7 +401,7 @@ async def _run_scanners(
             # Off the event loop. Scanners are file and subprocess work, and one
             # running inside a coroutine would stall every other job this worker
             # is handling.
-            produced = await asyncio.to_thread(scanner.scan, index)
+            results = await asyncio.to_thread(scanner.scan, index)
         except Exception:
             logger.exception(
                 "scanner failed",
@@ -408,12 +410,30 @@ async def _run_scanners(
             await record(category, CategoryStatus.FAILED)
             continue
 
+        # Scoring reads exactly the findings it always did — this one call is
+        # what keeps check results purely additive.
+        produced = findings_of(results)
         await scan_service.record_findings(db, scan_id=scan_id, findings=produced)
         findings.extend(produced)
+        checks.extend(
+            {
+                "id": result.id,
+                "category": category,
+                "title": result.title,
+                "outcome": result.outcome.value,
+                "reason": result.reason,
+            }
+            for result in results
+        )
         await record(category, CategoryStatus.COMPLETED)
         logger.info(
             "category scanned",
-            extra={"scan_id": str(scan_id), "category": category, "findings": len(produced)},
+            extra={
+                "scan_id": str(scan_id),
+                "category": category,
+                "findings": len(produced),
+                "checks": len(results),
+            },
         )
 
-    return findings, category_status
+    return findings, category_status, checks

@@ -11,10 +11,14 @@ import pytest
 
 from app.scanners.base import (
     MAX_READ_BYTES,
+    CheckResult,
+    CheckSpec,
+    RepositoryIndex,
     ScanFinding,
     Scanner,
     Severity,
     iter_files,
+    passed,
     read_text,
 )
 
@@ -128,11 +132,25 @@ class TestScannerProtocol:
     def test_a_conforming_object_satisfies_it(self) -> None:
         class Fake:
             category = "architecture"
+            CHECKS = (CheckSpec("architecture.example", "Example"),)
 
-            def scan(self, repo_path: Path) -> list[ScanFinding]:
-                return []
+            def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
+                return [passed(self.CHECKS[0])]
 
         assert isinstance(Fake(), Scanner)
+
+    def test_a_scanner_without_declared_checks_does_not_satisfy_it(self) -> None:
+        """Declaring CHECKS is what lets a shared test assert a run accounts
+        for every check, so the protocol requires it rather than trusting each
+        scanner to remember."""
+
+        class MissingChecks:
+            category = "architecture"
+
+            def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
+                return []
+
+        assert not isinstance(MissingChecks(), Scanner)
 
     def test_the_orm_reuses_this_severity(self) -> None:
         """One definition, so a value can never mean different things either

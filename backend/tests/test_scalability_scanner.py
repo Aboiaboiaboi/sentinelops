@@ -11,14 +11,16 @@ from pathlib import Path
 
 import pytest
 
-from app.scanners.base import RepositoryIndex, Severity
+from app.scanners.base import RepositoryIndex, Severity, findings_of
 from app.scanners.scalability import ScalabilityScanner
 
 SCANNER = ScalabilityScanner()
 
 
 def _scan(repo: Path, framework: str | None = "FastAPI"):
-    return SCANNER.scan(RepositoryIndex.build(repo, framework=framework))
+    """The findings from a scan; check outcomes are covered in
+    test_check_results.py."""
+    return findings_of(SCANNER.scan(RepositoryIndex.build(repo, framework=framework)))
 
 
 def _titles(repo: Path, framework: str | None = "FastAPI") -> set[str]:

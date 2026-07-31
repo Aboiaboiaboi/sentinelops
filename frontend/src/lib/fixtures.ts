@@ -12,6 +12,7 @@
  * in hooks/ removes fixture mode entirely.
  */
 import { ApiError } from '@/api/client';
+import type { CheckResult } from '@/types/check';
 import type { Finding } from '@/types/finding';
 import type { GitHubInstallation, GitHubRepository } from '@/types/github';
 import type { CreateProjectInput, Project } from '@/types/project';
@@ -270,6 +271,51 @@ export const store = {
 
   listFindings: (scanId: string) =>
     delay(isFinished(scanId) ? [...fixtureFindings] : []),
+
+  // A slice of each outcome, so the disclosure demonstrates the distinction it
+  // exists for: a skipped check is not a passed one.
+  listChecks: (scanId: string): Promise<CheckResult[]> =>
+    delay(
+      isFinished(scanId)
+        ? [
+            {
+              id: 'security.credential_files',
+              category: 'security',
+              title: 'No credential files committed',
+              outcome: 'passed',
+              reason: null,
+            },
+            {
+              id: 'security.debug_mode',
+              category: 'security',
+              title: 'Debug mode off',
+              outcome: 'failed',
+              reason: null,
+            },
+            {
+              id: 'reliability.health',
+              category: 'reliability',
+              title: 'Health endpoint',
+              outcome: 'passed',
+              reason: null,
+            },
+            {
+              id: 'reliability.retries',
+              category: 'reliability',
+              title: 'Retry handling',
+              outcome: 'skipped',
+              reason: 'no outbound calls were found to retry',
+            },
+            {
+              id: 'scalability.local_storage',
+              category: 'scalability',
+              title: 'Uploads kept off local disk',
+              outcome: 'skipped',
+              reason: 'an object storage client is in use, so local writes are staging',
+            },
+          ]
+        : [],
+    ),
 
   // A connected account with one private and one public repository, so the
   // picker and its private badge are visible without a GitHub App configured.

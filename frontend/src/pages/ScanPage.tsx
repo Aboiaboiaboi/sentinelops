@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryBreakdownChart } from '@/components/CategoryBreakdownChart';
 import { CommitContext } from '@/components/CommitContext';
+import { ScanChecks } from '@/components/ScanChecks';
 import { ScanFailure } from '@/components/ScanFailure';
 import { FindingsList } from '@/components/FindingsList';
 import { ScanStatusBadge } from '@/components/ScanStatusBadge';
@@ -146,6 +147,8 @@ export default function ScanPage() {
       </div>
 
       <CommitContext scan={scan} />
+
+      {finished && <ScanChecks scanId={scan.id} />}
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">

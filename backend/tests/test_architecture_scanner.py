@@ -10,14 +10,19 @@ from pathlib import Path
 import pytest
 
 from app.scanners.architecture import ArchitectureScanner
-from app.scanners.base import RepositoryIndex, Severity
+from app.scanners.base import RepositoryIndex, Severity, findings_of
 
 SCANNER = ArchitectureScanner()
 
 
 def _scan(repo: Path):
-    """Scanners take the shared index, so tests build one per call."""
-    return SCANNER.scan(RepositoryIndex.build(repo))
+    """The findings from a scan.
+
+    Scanners return a result per check now — passed, failed or skipped — so
+    this pulls out the findings the assertions below are written against.
+    Check outcomes have their own coverage in test_check_results.py.
+    """
+    return findings_of(SCANNER.scan(RepositoryIndex.build(repo)))
 
 
 def _titles(repo: Path) -> set[str]:

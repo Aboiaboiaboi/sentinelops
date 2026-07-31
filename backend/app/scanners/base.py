@@ -19,7 +19,7 @@ concurrent logins. The worker dispatches them with asyncio.to_thread.
 import enum
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -58,17 +58,97 @@ class ScanFinding:
     score_impact: int
 
 
+class CheckOutcome(enum.StrEnum):
+    """What happened to one check.
+
+    `passed` and `skipped` are the distinction this type exists for. Before it,
+    a scanner returned findings only, so "this service has a health endpoint"
+    and "this is a CLI tool, the question does not apply" were both an empty
+    list — the difference destroyed at the moment it was known.
+    """
+
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True, slots=True)
+class CheckSpec:
+    """One thing a scanner looks for, declared once.
+
+    `id` is stable and stored; renaming a check must not orphan the history of
+    scans that reported it. `title` is what a person reads.
+    """
+
+    id: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class CheckResult:
+    """The outcome of one check on one repository.
+
+    Carries `title` rather than looking it up from the spec at render time, so
+    a scan stays a faithful snapshot: a check reworded next year does not
+    retroactively change what an old scan said it examined.
+    """
+
+    id: str
+    title: str
+    outcome: CheckOutcome
+    #: Why it did not apply. Only ever set for SKIPPED.
+    reason: str | None = None
+    #: The problem found. Only ever set for FAILED.
+    finding: ScanFinding | None = None
+
+
+def passed(check: CheckSpec) -> CheckResult:
+    return CheckResult(id=check.id, title=check.title, outcome=CheckOutcome.PASSED)
+
+
+def skipped(check: CheckSpec, reason: str) -> CheckResult:
+    """Not applicable here, with the reason a user can read.
+
+    A reason is required, not optional: "skipped" with no explanation is the
+    same dead end as the silence this type replaced.
+    """
+    return CheckResult(id=check.id, title=check.title, outcome=CheckOutcome.SKIPPED, reason=reason)
+
+
+def failed(check: CheckSpec, finding: ScanFinding) -> CheckResult:
+    return CheckResult(id=check.id, title=check.title, outcome=CheckOutcome.FAILED, finding=finding)
+
+
+def findings_of(results: Iterable[CheckResult]) -> list[ScanFinding]:
+    """The findings among a scanner's results, for scoring and storage.
+
+    Scoring is unchanged by check results — it reads exactly the findings it
+    always did, and this is the one line that keeps that true.
+    """
+    return [result.finding for result in results if result.finding is not None]
+
+
 @runtime_checkable
 class Scanner(Protocol):
     """What the worker requires of a scanner."""
 
     category: str
 
-    def scan(self, repo: "RepositoryIndex") -> list[ScanFinding]:
-        """Inspect a checkout and report what is wrong with it.
+    #: Every check this scanner performs. Declared so that the set of checks is
+    #: knowable without running the scanner, and so a shared test can assert
+    #: that a run accounts for every one of them.
+    CHECKS: tuple[CheckSpec, ...]
+
+    def scan(self, repo: "RepositoryIndex") -> list[CheckResult]:
+        """Inspect a checkout and report the outcome of every check.
 
         Takes the shared index rather than a path, so that six scanners do not
         each walk the same tree. See `RepositoryIndex`.
+
+        Returns one result per declared check — passed, failed or skipped.
+        Returning results rather than findings is what makes a score
+        explainable: a category showing full marks can say *what it verified*
+        rather than merely having nothing to complain about.
 
         Must not raise for ordinary problems — an unreadable file or an
         unfamiliar layout is a finding or a silence, not an exception. Raising

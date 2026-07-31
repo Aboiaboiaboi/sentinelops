@@ -13,9 +13,29 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.scanners.base import RepositoryIndex, ScanFinding, Severity
+from app.scanners.base import (
+    CheckResult,
+    CheckSpec,
+    RepositoryIndex,
+    ScanFinding,
+    Severity,
+    failed,
+    passed,
+    skipped,
+)
 
 CATEGORY = "deployment"
+
+_CONFIG = CheckSpec("deployment.config", "Deployment configuration")
+_PINNING = CheckSpec("deployment.image_pinning", "Pinned base images")
+_NON_ROOT = CheckSpec("deployment.non_root", "Container drops privileges")
+_HEALTHCHECK = CheckSpec("deployment.healthcheck", "Container healthcheck")
+_DOCKERIGNORE = CheckSpec("deployment.dockerignore", "Build context excluded")
+_CI = CheckSpec("deployment.ci", "CI pipeline")
+
+# The image checks read Dockerfile stages, so without one there is nothing to
+# read — a repository whose image is built elsewhere is not failing them.
+_NO_DOCKERFILE = "no Dockerfile was found to inspect"
 
 # Impacts. Both paths through the checks below total the category weight of 15:
 # a repository with no deployment config at all loses 11 + 4, and one with a
@@ -226,8 +246,9 @@ def _runs_as_root(stage: _Stage) -> bool:
 
 class DeploymentScanner:
     category = CATEGORY
+    CHECKS = (_CONFIG, _PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE, _CI)
 
-    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         # Both questions answered in one pass over the already-built index.
         # This used to be two separate walks of the tree, which on top of the
         # other scanners' walks meant traversing the same repository roughly a
@@ -245,14 +266,23 @@ class DeploymentScanner:
             elif not has_orchestration and _is_orchestration(path, repo.path):
                 has_orchestration = True
 
-        findings: list[ScanFinding] = []
+        results: list[CheckResult] = []
         if not dockerfiles and not has_orchestration:
-            findings.append(self._no_deployment_config())
+            results.append(failed(_CONFIG, self._no_deployment_config()))
+            # Nothing describes the deployment, so there is nothing to inspect
+            # for pinning, privileges or build context. Reporting those as
+            # passed would credit a repository for a file it does not have.
+            no_config = "no deployment configuration was found to inspect"
+            results.extend(
+                skipped(check, no_config)
+                for check in (_PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE)
+            )
         else:
-            findings.extend(self._check_images(dockerfiles, compose_files, repo))
+            results.append(passed(_CONFIG))
+            results.extend(self._check_images(dockerfiles, compose_files, repo))
 
-        findings.extend(self._check_ci(repo))
-        return findings
+        results.append(self._check_ci(repo))
+        return results
 
     def _no_deployment_config(self) -> ScanFinding:
         return ScanFinding(
@@ -273,7 +303,7 @@ class DeploymentScanner:
 
     def _check_images(
         self, dockerfiles: list[Path], compose_files: list[Path], repo: RepositoryIndex
-    ) -> list[ScanFinding]:
+    ) -> list[CheckResult]:
         unpinned: list[str] = []
         root_stages: list[str] = []
         healthchecked = False
@@ -305,97 +335,140 @@ class DeploymentScanner:
             for image in _compose_unpinned_images(repo.read(path)):
                 unpinned.append(f"{relative} ({image})")
 
-        findings: list[ScanFinding] = []
-        if broad_copy is not None and not repo.has_root_entry(".dockerignore"):
-            findings.append(
-                ScanFinding(
-                    category=CATEGORY,
-                    severity=Severity.MEDIUM,
-                    title="Full build context copied with no .dockerignore",
-                    description=(
-                        f"{broad_copy} copies the entire directory into the image and there is "
-                        "no .dockerignore. Whatever is lying around at build time ships in the "
-                        "layers — local env files, the .git history, dependency caches — and "
-                        "stays retrievable from the image even if a later layer deletes it."
-                    ),
-                    recommendation=(
-                        "Add a .dockerignore excluding at least .git, .env* and dependency "
-                        "directories — or copy only the paths the image actually needs."
-                    ),
-                    score_impact=_NO_DOCKERIGNORE,
-                )
+        results: list[CheckResult] = []
+
+        if not dockerfiles:
+            results.append(skipped(_DOCKERIGNORE, _NO_DOCKERFILE))
+        elif repo.has_root_entry(".dockerignore"):
+            results.append(passed(_DOCKERIGNORE))
+        elif broad_copy is None:
+            results.append(
+                skipped(_DOCKERIGNORE, "nothing copies the whole build context into the image")
             )
-        if unpinned:
-            findings.append(
-                ScanFinding(
-                    category=CATEGORY,
-                    severity=Severity.MEDIUM,
-                    title="Base image is not pinned",
-                    description=(
-                        f"{unpinned[0]} uses a floating tag. The same Dockerfile will produce "
-                        "different images on different days, so a build that passed CI is not "
-                        "necessarily the one that ships."
+        else:
+            results.append(
+                failed(
+                    _DOCKERIGNORE,
+                    ScanFinding(
+                        category=CATEGORY,
+                        severity=Severity.MEDIUM,
+                        title="Full build context copied with no .dockerignore",
+                        description=(
+                            f"{broad_copy} copies the entire directory into the image and there "
+                            "is no .dockerignore. Whatever is lying around at build time ships in "
+                            "the layers — local env files, the .git history, dependency caches — "
+                            "and stays retrievable from the image even if a later layer deletes it."
+                        ),
+                        recommendation=(
+                            "Add a .dockerignore excluding at least .git, .env* and dependency "
+                            "directories — or copy only the paths the image actually needs."
+                        ),
+                        score_impact=_NO_DOCKERIGNORE,
                     ),
-                    recommendation=(
-                        "Pin to a specific version, or to a digest with @sha256: for a build that "
-                        "is reproducible byte for byte."
-                    ),
-                    score_impact=_UNPINNED_BASE_IMAGE,
                 )
             )
 
-        if root_stages:
-            findings.append(
-                ScanFinding(
-                    category=CATEGORY,
-                    severity=Severity.HIGH,
-                    title="Container runs as root",
-                    description=(
-                        f"{root_stages[0]} defines a process but never drops privileges. If the "
-                        "application is compromised, the attacker starts as root inside the "
-                        "container — and with some host configurations that maps to root outside "
-                        "it."
+        if not unpinned:
+            results.append(passed(_PINNING))
+        else:
+            results.append(
+                failed(
+                    _PINNING,
+                    ScanFinding(
+                        category=CATEGORY,
+                        severity=Severity.MEDIUM,
+                        title="Base image is not pinned",
+                        description=(
+                            f"{unpinned[0]} uses a floating tag. The same Dockerfile will produce "
+                            "different images on different days, so a build that passed CI is not "
+                            "necessarily the one that ships."
+                        ),
+                        recommendation=(
+                            "Pin to a specific version, or to a digest with @sha256: for a build "
+                            "that is reproducible byte for byte."
+                        ),
+                        score_impact=_UNPINNED_BASE_IMAGE,
                     ),
-                    recommendation=(
-                        "Create an unprivileged user in the image and add a USER instruction "
-                        "before CMD. Keep application code owned by root so the running process "
-                        "cannot rewrite it."
-                    ),
-                    score_impact=_RUNS_AS_ROOT,
                 )
             )
 
-        if runnable_seen and not healthchecked:
-            findings.append(
-                ScanFinding(
-                    category=CATEGORY,
-                    severity=Severity.LOW,
-                    title="No container healthcheck",
-                    description=(
-                        "No HEALTHCHECK instruction was found. An orchestrator can only tell that "
-                        "the process started, not that it is serving — so a container that is up "
-                        "but wedged keeps receiving traffic."
+        # Privileges and health are properties of the stage that actually ships.
+        # A Dockerfile with no runnable stage — a base image others build on —
+        # has no process to run unprivileged or to health-check.
+        if not dockerfiles:
+            results.append(skipped(_NON_ROOT, _NO_DOCKERFILE))
+            results.append(skipped(_HEALTHCHECK, _NO_DOCKERFILE))
+            return results
+
+        if not runnable_seen:
+            no_process = "no stage in the Dockerfile starts a process"
+            results.append(skipped(_NON_ROOT, no_process))
+            results.append(skipped(_HEALTHCHECK, no_process))
+            return results
+
+        if not root_stages:
+            results.append(passed(_NON_ROOT))
+        else:
+            results.append(
+                failed(
+                    _NON_ROOT,
+                    ScanFinding(
+                        category=CATEGORY,
+                        severity=Severity.HIGH,
+                        title="Container runs as root",
+                        description=(
+                            f"{root_stages[0]} defines a process but never drops privileges. If "
+                            "the application is compromised, the attacker starts as root inside "
+                            "the container — and with some host configurations that maps to root "
+                            "outside it."
+                        ),
+                        recommendation=(
+                            "Create an unprivileged user in the image and add a USER instruction "
+                            "before CMD. Keep application code owned by root so the running "
+                            "process cannot rewrite it."
+                        ),
+                        score_impact=_RUNS_AS_ROOT,
                     ),
-                    recommendation=(
-                        "Add a HEALTHCHECK that exercises the path that matters, or configure a "
-                        "readiness probe if you deploy to Kubernetes."
-                    ),
-                    score_impact=_NO_HEALTHCHECK,
                 )
             )
-        return findings
 
-    def _check_ci(self, repo: RepositoryIndex) -> list[ScanFinding]:
+        if healthchecked:
+            results.append(passed(_HEALTHCHECK))
+        else:
+            results.append(
+                failed(
+                    _HEALTHCHECK,
+                    ScanFinding(
+                        category=CATEGORY,
+                        severity=Severity.LOW,
+                        title="No container healthcheck",
+                        description=(
+                            "No HEALTHCHECK instruction was found. An orchestrator can only tell "
+                            "that the process started, not that it is serving — so a container "
+                            "that is up but wedged keeps receiving traffic."
+                        ),
+                        recommendation=(
+                            "Add a HEALTHCHECK that exercises the path that matters, or configure "
+                            "a readiness probe if you deploy to Kubernetes."
+                        ),
+                        score_impact=_NO_HEALTHCHECK,
+                    ),
+                )
+            )
+        return results
+
+    def _check_ci(self, repo: RepositoryIndex) -> CheckResult:
         # A CI directory only counts if it has something in it — an empty
         # .github/workflows/ runs nothing.
         if any(
             repo.relative(path).lower().startswith(_CI_DIRECTORY_PREFIXES) for path in repo.files
         ):
-            return []
+            return passed(_CI)
         if repo.has_root_entry(*_CI_ROOT_FILES):
-            return []
+            return passed(_CI)
 
-        return [
+        return failed(
+            _CI,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -410,5 +483,5 @@ class DeploymentScanner:
                     "the image on every push."
                 ),
                 score_impact=_NO_CI_PIPELINE,
-            )
-        ]
+            ),
+        )

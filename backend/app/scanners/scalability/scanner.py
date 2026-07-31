@@ -16,9 +16,27 @@ to be inconsistent across, so none of this applies to one.
 
 import re
 
-from app.scanners.base import RepositoryIndex, ScanFinding, Severity, code_only
+from app.scanners.base import (
+    CheckResult,
+    CheckSpec,
+    RepositoryIndex,
+    ScanFinding,
+    Severity,
+    code_only,
+    failed,
+    passed,
+    skipped,
+)
 
 CATEGORY = "scalability"
+
+_STATE = CheckSpec("scalability.in_memory_state", "State kept outside the process")
+_STORAGE = CheckSpec("scalability.local_storage", "Uploads kept off local disk")
+_POOLING = CheckSpec("scalability.connection_pooling", "Database connection pooling")
+
+# Every check here asks the same question — would a second copy of this service
+# behave correctly — so a non-service skips all three for one reason.
+_NOT_A_SERVICE = "only asked of something that serves traffic behind a load balancer"
 
 # Impacts, summing to the category weight of 10. In-memory state is worth more
 # than the other two together because it is the only one that makes a second
@@ -138,12 +156,15 @@ _RAW_CONNECT = re.compile(
 
 class ScalabilityScanner:
     category = CATEGORY
+    CHECKS = (_STATE, _STORAGE, _POOLING)
 
-    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         # Nothing in this category applies to something that does not serve
-        # traffic. A library has no instances to be inconsistent across.
+        # traffic. A library has no instances to be inconsistent across — and
+        # saying so is the point: silence here used to be indistinguishable
+        # from three clean passes.
         if not repo.is_service:
-            return []
+            return [skipped(check, _NOT_A_SERVICE) for check in self.CHECKS]
 
         manifests = repo.manifest_text()
 
@@ -174,11 +195,11 @@ class ScalabilityScanner:
             ):
                 unpooled.append(repo.relative(path))
 
-        findings: list[ScanFinding] = []
-        findings.extend(self._check_state(repo, manifests, stateful_routes))
-        findings.extend(self._check_storage(local_uploads, uses_object_storage))
-        findings.extend(self._check_connections(unpooled))
-        return findings
+        return [
+            self._check_state(repo, manifests, stateful_routes),
+            self._check_storage(local_uploads, uses_object_storage),
+            self._check_connections(unpooled),
+        ]
 
     def _is_migration(self, repo: RepositoryIndex, path) -> bool:
         parts = path.relative_to(repo.path).parts[:-1]
@@ -198,12 +219,12 @@ class ScalabilityScanner:
 
     def _check_state(
         self, repo: RepositoryIndex, manifests: str, stateful_routes: list[str]
-    ) -> list[ScanFinding]:
+    ) -> CheckResult:
         unbacked_sessions = bool(
             _UNBACKED_SESSIONS.search(manifests)
         ) and not _SESSION_STORE.search(manifests)
         if not unbacked_sessions and not stateful_routes:
-            return []
+            return passed(_STATE)
 
         if unbacked_sessions:
             detail = (
@@ -219,7 +240,8 @@ class ScalabilityScanner:
                 "that request handlers write to, so each instance accumulates its own copy."
             )
 
-        return [
+        return failed(
+            _STATE,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.HIGH,
@@ -234,16 +256,19 @@ class ScalabilityScanner:
                     "instance reads the same thing and any of them can serve any request."
                 ),
                 score_impact=_IN_MEMORY_STATE,
-            )
-        ]
+            ),
+        )
 
-    def _check_storage(
-        self, local_uploads: list[str], uses_object_storage: bool
-    ) -> list[ScanFinding]:
-        if not local_uploads or uses_object_storage:
-            return []
+    def _check_storage(self, local_uploads: list[str], uses_object_storage: bool) -> CheckResult:
+        if uses_object_storage:
+            return skipped(
+                _STORAGE, "an object storage client is in use, so local writes are staging"
+            )
+        if not local_uploads:
+            return passed(_STORAGE)
         others = f" and {len(local_uploads) - 1} other files" if len(local_uploads) > 1 else ""
-        return [
+        return failed(
+            _STORAGE,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -259,14 +284,15 @@ class ScalabilityScanner:
                     "key in the database, so any instance can serve any file."
                 ),
                 score_impact=_LOCAL_FILE_STORAGE,
-            )
-        ]
+            ),
+        )
 
-    def _check_connections(self, unpooled: list[str]) -> list[ScanFinding]:
+    def _check_connections(self, unpooled: list[str]) -> CheckResult:
         if not unpooled:
-            return []
+            return passed(_POOLING)
         others = f" and {len(unpooled) - 1} other files" if len(unpooled) > 1 else ""
-        return [
+        return failed(
+            _POOLING,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -284,5 +310,5 @@ class ScalabilityScanner:
                     "front of the database as well."
                 ),
                 score_impact=_CONNECTION_PER_REQUEST,
-            )
-        ]
+            ),
+        )

@@ -10,9 +10,22 @@ the manifest is the more reliable signal of the two.
 
 import re
 
-from app.scanners.base import RepositoryIndex, ScanFinding, Severity
+from app.scanners.base import (
+    CheckResult,
+    CheckSpec,
+    RepositoryIndex,
+    ScanFinding,
+    Severity,
+    failed,
+    passed,
+    skipped,
+)
 
 CATEGORY = "observability"
+
+_LOGGING = CheckSpec("observability.logging", "Logging framework")
+_STRUCTURED = CheckSpec("observability.structured_logging", "Machine-readable logs")
+_TELEMETRY = CheckSpec("observability.telemetry", "Metrics or error tracking")
 
 # Impacts. The worst case — nothing logs and nothing is measured — totals the
 # category weight of 10. Having plain-text logging is deliberately cheaper than
@@ -77,8 +90,9 @@ _STRUCTURED_CALL = re.compile(
 
 class ObservabilityScanner:
     category = CATEGORY
+    CHECKS = (_LOGGING, _STRUCTURED, _TELEMETRY)
 
-    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         # Evidence has to be an import, a manifest entry, or a call site —
         # never prose. Searching raw source found "OpenTelemetry" inside a
         # docstring that said OpenTelemetry was deliberately *not* used, and
@@ -104,17 +118,29 @@ class ObservabilityScanner:
         )
         has_telemetry = bool(_TELEMETRY_EVIDENCE.search(declared))
 
-        findings: list[ScanFinding] = []
-        if not has_logging:
-            findings.append(self._no_logging())
-        elif repo.is_service and not has_structured:
-            # Only reported when logging exists — "unstructured" is not a
-            # meaningful complaint about a project that logs nothing at all.
-            findings.append(self._unstructured_logging())
+        results: list[CheckResult] = []
 
-        if repo.is_service and not has_telemetry:
-            findings.append(self._no_telemetry())
-        return findings
+        results.append(passed(_LOGGING) if has_logging else failed(_LOGGING, self._no_logging()))
+
+        if not has_logging:
+            # "Unstructured" is not a meaningful complaint about a project that
+            # logs nothing at all — there is no output to structure.
+            results.append(skipped(_STRUCTURED, "nothing logs, so there is no output to structure"))
+        elif not repo.is_service:
+            results.append(skipped(_STRUCTURED, "only asked of something that serves traffic"))
+        elif has_structured:
+            results.append(passed(_STRUCTURED))
+        else:
+            results.append(failed(_STRUCTURED, self._unstructured_logging()))
+
+        if not repo.is_service:
+            results.append(skipped(_TELEMETRY, "only asked of something that serves traffic"))
+        elif has_telemetry:
+            results.append(passed(_TELEMETRY))
+        else:
+            results.append(failed(_TELEMETRY, self._no_telemetry()))
+
+        return results
 
     def _no_logging(self) -> ScanFinding:
         return ScanFinding(

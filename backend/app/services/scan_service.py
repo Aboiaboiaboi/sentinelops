@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Text, cast, func, select, update
 from sqlalchemy.dialects.postgresql import array
@@ -257,6 +258,7 @@ async def complete_scan(
     score: int,
     scoring_version: str,
     category_scores: Mapping[str, int] | None = None,
+    check_results: Sequence[Mapping[str, Any]] | None = None,
 ) -> bool:
     """Finish a scan, returning whether it was still running.
 
@@ -274,6 +276,7 @@ async def complete_scan(
             score=score,
             scoring_version=scoring_version,
             category_scores=dict(category_scores or {}),
+            check_results=[dict(result) for result in (check_results or ())],
         )
     )
     await db.commit()

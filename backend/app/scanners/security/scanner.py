@@ -16,9 +16,31 @@ believing the tool. Every check here prefers silence to a guess.
 import re
 from pathlib import Path
 
-from app.scanners.base import RepositoryIndex, ScanFinding, Severity, code_only, is_test_file
+from app.scanners.base import (
+    CheckResult,
+    CheckSpec,
+    RepositoryIndex,
+    ScanFinding,
+    Severity,
+    code_only,
+    failed,
+    is_test_file,
+    passed,
+    skipped,
+)
 
 CATEGORY = "security"
+
+_CREDENTIAL_FILES = CheckSpec("security.credential_files", "No credential files committed")
+_HARDCODED = CheckSpec("security.hardcoded_secrets", "No secrets hardcoded in source")
+_DEBUG = CheckSpec("security.debug_mode", "Debug mode off")
+_TLS = CheckSpec("security.tls_verification", "TLS verification enabled")
+_CONTAINER = CheckSpec("security.container_secrets", "No secrets in container configuration")
+_GITIGNORE = CheckSpec("security.gitignore", "Env files protected by .gitignore")
+
+# The source-reading checks need source to read. A repository of configuration
+# and documentation is not passing them — they never ran.
+_NO_SOURCE = "the repository has no hand-written source files"
 
 # Impacts, summing to the category weight of 25.
 _CREDENTIAL_FILE = 6
@@ -232,13 +254,15 @@ def _is_compose_file(path: Path) -> bool:
 
 class SecurityScanner:
     category = CATEGORY
+    CHECKS = (_CREDENTIAL_FILES, _HARDCODED, _DEBUG, _TLS, _CONTAINER, _GITIGNORE)
 
-    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         credential_files: list[str] = []
         secret_files: list[str] = []
         debug_files: list[str] = []
         tls_files: list[str] = []
         container_files: list[str] = []
+        container_configs = 0
 
         for path in repo.files:
             # A credential fixture inside tests/ is a fixture. Checked with
@@ -250,6 +274,7 @@ class SecurityScanner:
             if self._is_committed_credential(repo, path):
                 credential_files.append(repo.relative(path))
             if _is_dockerfile(path) or _is_compose_file(path):
+                container_configs += 1
                 if self._holds_container_secret(repo, path):
                     container_files.append(repo.relative(path))
 
@@ -264,14 +289,15 @@ class SecurityScanner:
             if _TLS_DISABLED_PATTERN.search(content):
                 tls_files.append(repo.relative(path))
 
-        findings: list[ScanFinding] = []
-        findings.extend(self._check_credential_files(credential_files))
-        findings.extend(self._check_hardcoded_secrets(secret_files))
-        findings.extend(self._check_debug(debug_files))
-        findings.extend(self._check_tls(tls_files))
-        findings.extend(self._check_container_config(container_files))
-        findings.extend(self._check_gitignore(repo))
-        return findings
+        has_source = bool(repo.production_files)
+        return [
+            self._check_credential_files(credential_files),
+            self._check_hardcoded_secrets(has_source, secret_files),
+            self._check_debug(has_source, debug_files),
+            self._check_tls(has_source, tls_files),
+            self._check_container_config(container_configs, container_files),
+            self._check_gitignore(repo),
+        ]
 
     # --- detection ---------------------------------------------------------
 
@@ -339,11 +365,14 @@ class SecurityScanner:
 
     # --- findings ----------------------------------------------------------
 
-    def _check_credential_files(self, found: list[str]) -> list[ScanFinding]:
+    def _check_credential_files(self, found: list[str]) -> CheckResult:
+        # Never skipped: any repository can commit a key, and "there was no
+        # source code" is no reason not to have looked.
         if not found:
-            return []
+            return passed(_CREDENTIAL_FILES)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return [
+        return failed(
+            _CREDENTIAL_FILES,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.CRITICAL,
@@ -360,14 +389,17 @@ class SecurityScanner:
                     "blanked .env.example instead so newcomers know what to configure."
                 ),
                 score_impact=_CREDENTIAL_FILE,
-            )
-        ]
+            ),
+        )
 
-    def _check_hardcoded_secrets(self, found: list[str]) -> list[ScanFinding]:
+    def _check_hardcoded_secrets(self, has_source: bool, found: list[str]) -> CheckResult:
+        if not has_source:
+            return skipped(_HARDCODED, _NO_SOURCE)
         if not found:
-            return []
+            return passed(_HARDCODED)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return [
+        return failed(
+            _HARDCODED,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.CRITICAL,
@@ -384,14 +416,17 @@ class SecurityScanner:
                     "it lands."
                 ),
                 score_impact=_HARDCODED_SECRET,
-            )
-        ]
+            ),
+        )
 
-    def _check_debug(self, found: list[str]) -> list[ScanFinding]:
+    def _check_debug(self, has_source: bool, found: list[str]) -> CheckResult:
+        if not has_source:
+            return skipped(_DEBUG, _NO_SOURCE)
         if not found:
-            return []
+            return passed(_DEBUG)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return [
+        return failed(
+            _DEBUG,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.HIGH,
@@ -407,14 +442,17 @@ class SecurityScanner:
                     "gets it right by doing nothing."
                 ),
                 score_impact=_DEBUG_ENABLED,
-            )
-        ]
+            ),
+        )
 
-    def _check_tls(self, found: list[str]) -> list[ScanFinding]:
+    def _check_tls(self, has_source: bool, found: list[str]) -> CheckResult:
+        if not has_source:
+            return skipped(_TLS, _NO_SOURCE)
         if not found:
-            return []
+            return passed(_TLS)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return [
+        return failed(
+            _TLS,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.HIGH,
@@ -430,14 +468,17 @@ class SecurityScanner:
                     "explicitly instead of trusting everyone."
                 ),
                 score_impact=_TLS_DISABLED,
-            )
-        ]
+            ),
+        )
 
-    def _check_container_config(self, found: list[str]) -> list[ScanFinding]:
+    def _check_container_config(self, config_count: int, found: list[str]) -> CheckResult:
+        if config_count == 0:
+            return skipped(_CONTAINER, "no Dockerfile or Compose file was found to inspect")
         if not found:
-            return []
+            return passed(_CONTAINER)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return [
+        return failed(
+            _CONTAINER,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.HIGH,
@@ -452,21 +493,22 @@ class SecurityScanner:
                     "environment, an env_file kept out of git, or your platform's secret store."
                 ),
                 score_impact=_SECRET_IN_CONTAINER_CONFIG,
-            )
-        ]
+            ),
+        )
 
-    def _check_gitignore(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def _check_gitignore(self, repo: RepositoryIndex) -> CheckResult:
         # Only meaningful for a project that demonstrably loads env files;
         # otherwise there is nothing for the missing rule to fail to protect.
         uses_env = bool(_ENV_FILE_USAGE.search(repo.manifest_text()))
         if not uses_env:
-            return []
+            return skipped(_GITIGNORE, "the project does not load configuration from env files")
 
         gitignore = repo.read(repo.path / ".gitignore")
         if ".env" in gitignore:
-            return []
+            return passed(_GITIGNORE)
 
-        return [
+        return failed(
+            _GITIGNORE,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -482,5 +524,5 @@ class SecurityScanner:
                     "is committed."
                 ),
                 score_impact=_NO_GITIGNORE_PROTECTION,
-            )
-        ]
+            ),
+        )

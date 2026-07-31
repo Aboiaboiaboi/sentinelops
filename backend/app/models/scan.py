@@ -147,6 +147,20 @@ class Scan(Base):
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
 
+    # Every check the scanners performed, with its outcome. A list of
+    # {id, category, title, outcome, reason} maps.
+    #
+    # Deliberately absent from the polled ScanRead: that endpoint is read every
+    # three seconds and is committed to staying one cheap row read, so 27
+    # entries ride a separate endpoint fetched once, exactly as findings do.
+    #
+    # Titles are stored rather than looked up at render time, so a scan stays a
+    # faithful record — rewording a check next year must not change what an old
+    # scan says it examined.
+    check_results: Mapped[list[Any]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+
     # Why a failed scan failed. Null for anything that has not failed.
     #
     # `error_detail` is built from the *exception type*, never from git's

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.scanners.base import RepositoryIndex, Severity
+from app.scanners.base import RepositoryIndex, Severity, findings_of
 from app.scanners.security import SecurityScanner
 
 SCANNER = SecurityScanner()
@@ -24,7 +24,9 @@ FAKE_GITHUB_TOKEN = "ghp_" + "Ab1" * 12
 
 
 def _scan(repo: Path):
-    return SCANNER.scan(RepositoryIndex.build(repo, framework="FastAPI"))
+    """The findings from a scan; check outcomes are covered in
+    test_check_results.py."""
+    return findings_of(SCANNER.scan(RepositoryIndex.build(repo, framework="FastAPI")))
 
 
 def _titles(repo: Path) -> set[str]:

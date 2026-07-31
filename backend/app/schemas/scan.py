@@ -3,8 +3,24 @@ import uuid
 from pydantic import BaseModel, ConfigDict, computed_field
 
 from app.models.scan import SCAN_ERROR_HINTS, CategoryStatus, ScanStatus
+from app.scanners.base import CheckOutcome
 from app.schemas.common import UtcDatetime
 from app.services.scoring_service import CATEGORY_WEIGHTS
+
+
+class CheckResultRead(BaseModel):
+    """One check a scan performed. Shape of GET /scans/{id}/checks.
+
+    `reason` is present only for a skipped check and is required there — a
+    skip with no explanation is the same dead end as the silence that check
+    results were introduced to replace.
+    """
+
+    id: str
+    category: str
+    title: str
+    outcome: CheckOutcome
+    reason: str | None = None
 
 
 class ScanRead(BaseModel):

@@ -9,15 +9,16 @@ from pathlib import Path
 
 import pytest
 
-from app.scanners.base import RepositoryIndex, Severity
+from app.scanners.base import RepositoryIndex, Severity, findings_of
 from app.scanners.deployment import DeploymentScanner
 
 SCANNER = DeploymentScanner()
 
 
 def _scan(repo: Path):
-    """Scanners take the shared index, so tests build one per call."""
-    return SCANNER.scan(RepositoryIndex.build(repo))
+    """The findings from a scan; check outcomes are covered in
+    test_check_results.py."""
+    return findings_of(SCANNER.scan(RepositoryIndex.build(repo)))
 
 
 def _titles(repo: Path) -> set[str]:

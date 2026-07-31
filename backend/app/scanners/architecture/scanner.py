@@ -15,9 +15,28 @@ costs more than no README, because it should.
 from collections import Counter
 from pathlib import Path
 
-from app.scanners.base import RepositoryIndex, ScanFinding, Severity
+from app.scanners.base import (
+    CheckResult,
+    CheckSpec,
+    RepositoryIndex,
+    ScanFinding,
+    Severity,
+    failed,
+    passed,
+    skipped,
+)
 
 CATEGORY = "architecture"
+
+_TESTS = CheckSpec("architecture.tests", "Automated tests")
+_LOCKFILE = CheckSpec("architecture.lockfile", "Dependency locking")
+_FILE_SIZE = CheckSpec("architecture.file_size", "Reviewable file sizes")
+_LAYOUT = CheckSpec("architecture.layout", "Module organisation")
+_README = CheckSpec("architecture.readme", "README")
+
+# Several checks measure the source tree, so with no source there is nothing
+# to measure — distinct from measuring it and finding it fine.
+_NO_SOURCE = "the repository has no hand-written source files"
 
 # Impacts, summing to the category weight of 20.
 _NO_TESTS = 8
@@ -51,8 +70,9 @@ _MAX_ROOT_SOURCE_FILES = 12
 
 class ArchitectureScanner:
     category = CATEGORY
+    CHECKS = (_TESTS, _LOCKFILE, _FILE_SIZE, _LAYOUT, _README)
 
-    def scan(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         # Hand-written code only. Generated files are excluded because none of
         # these findings are actionable against them: nobody splits a 4000-line
         # generated client into modules, and on a repository like
@@ -61,20 +81,23 @@ class ArchitectureScanner:
         source_files = list(repo.production_files)
         test_files = list(repo.test_files)
 
-        findings: list[ScanFinding] = []
-        findings.extend(self._check_tests(source_files, test_files))
-        findings.extend(self._check_lockfiles(repo))
-        findings.extend(self._check_file_sizes(source_files, repo))
-        findings.extend(self._check_layout(source_files, repo))
-        findings.extend(self._check_readme(repo))
-        return findings
+        return [
+            self._check_tests(source_files, test_files),
+            self._check_lockfiles(repo),
+            self._check_file_sizes(source_files, repo),
+            self._check_layout(source_files, repo),
+            self._check_readme(repo),
+        ]
 
-    def _check_tests(self, source_files: list[Path], test_files: list[Path]) -> list[ScanFinding]:
+    def _check_tests(self, source_files: list[Path], test_files: list[Path]) -> CheckResult:
         # An empty repository is not an untested one. Reporting a missing test
         # suite for a repo with no code would be noise.
-        if not source_files or test_files:
-            return []
-        return [
+        if not source_files:
+            return skipped(_TESTS, _NO_SOURCE)
+        if test_files:
+            return passed(_TESTS)
+        return failed(
+            _TESTS,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.HIGH,
@@ -89,18 +112,20 @@ class ArchitectureScanner:
                     "would be most expensive to break rather than aiming for coverage."
                 ),
                 score_impact=_NO_TESTS,
-            )
-        ]
+            ),
+        )
 
-    def _check_lockfiles(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def _check_lockfiles(self, repo: RepositoryIndex) -> CheckResult:
+        declared = [manifest for manifest in _LOCKFILES if repo.has_root_entry(manifest)]
+        if not declared:
+            return skipped(_LOCKFILE, "no dependency manifest was found to lock")
         unlocked = [
-            manifest
-            for manifest, locks in _LOCKFILES.items()
-            if repo.has_root_entry(manifest) and not repo.has_root_entry(*locks)
+            manifest for manifest in declared if not repo.has_root_entry(*_LOCKFILES[manifest])
         ]
         if not unlocked:
-            return []
-        return [
+            return passed(_LOCKFILE)
+        return failed(
+            _LOCKFILE,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -115,12 +140,12 @@ class ArchitectureScanner:
                     "CI and in your image build."
                 ),
                 score_impact=_NO_LOCKFILE,
-            )
-        ]
+            ),
+        )
 
-    def _check_file_sizes(
-        self, source_files: list[Path], repo: RepositoryIndex
-    ) -> list[ScanFinding]:
+    def _check_file_sizes(self, source_files: list[Path], repo: RepositoryIndex) -> CheckResult:
+        if not source_files:
+            return skipped(_FILE_SIZE, _NO_SOURCE)
         oversized = []
         for path in source_files:
             # Through the index, so a later scanner grepping the same files
@@ -130,12 +155,13 @@ class ArchitectureScanner:
                 oversized.append((repo.relative(path), lines))
 
         if not oversized:
-            return []
+            return passed(_FILE_SIZE)
 
         oversized.sort(key=lambda item: item[1], reverse=True)
         worst, worst_lines = oversized[0]
         others = f" and {len(oversized) - 1} other files" if len(oversized) > 1 else ""
-        return [
+        return failed(
+            _FILE_SIZE,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.MEDIUM,
@@ -149,17 +175,21 @@ class ArchitectureScanner:
                     "already exist in them — usually one responsibility per module."
                 ),
                 score_impact=_OVERSIZED_FILE,
-            )
-        ]
+            ),
+        )
 
-    def _check_layout(self, source_files: list[Path], repo: RepositoryIndex) -> list[ScanFinding]:
+    def _check_layout(self, source_files: list[Path], repo: RepositoryIndex) -> CheckResult:
+        if not source_files:
+            return skipped(_LAYOUT, _NO_SOURCE)
+
         depths = Counter(len(p.relative_to(repo.path).parts) for p in source_files)
         at_root = depths.get(1, 0)
         nested = sum(count for depth, count in depths.items() if depth > 1)
 
         if at_root <= _MAX_ROOT_SOURCE_FILES or nested > at_root:
-            return []
-        return [
+            return passed(_LAYOUT)
+        return failed(
+            _LAYOUT,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.LOW,
@@ -174,13 +204,14 @@ class ArchitectureScanner:
                     "for configuration and entry points."
                 ),
                 score_impact=_FLAT_LAYOUT,
-            )
-        ]
+            ),
+        )
 
-    def _check_readme(self, repo: RepositoryIndex) -> list[ScanFinding]:
+    def _check_readme(self, repo: RepositoryIndex) -> CheckResult:
         if repo.has_root_entry(*_README_NAMES):
-            return []
-        return [
+            return passed(_README)
+        return failed(
+            _README,
             ScanFinding(
                 category=CATEGORY,
                 severity=Severity.LOW,
@@ -195,5 +226,5 @@ class ArchitectureScanner:
                     "to run its tests."
                 ),
                 score_impact=_NO_README,
-            )
-        ]
+            ),
+        )
