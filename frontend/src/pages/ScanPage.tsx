@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryBreakdownChart } from '@/components/CategoryBreakdownChart';
 import { CommitContext } from '@/components/CommitContext';
 import { ScanChecks } from '@/components/ScanChecks';
+import { ScanComparison } from '@/components/ScanComparison';
 import { ScanFailure } from '@/components/ScanFailure';
 import { FindingsList } from '@/components/FindingsList';
 import { ScanStatusBadge } from '@/components/ScanStatusBadge';
@@ -147,6 +148,8 @@ export default function ScanPage() {
       </div>
 
       <CommitContext scan={scan} />
+
+      <ScanComparison scanId={scan.id} enabled={scan.status === 'completed'} />
 
       {finished && <ScanChecks scanId={scan.id} />}
 

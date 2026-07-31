@@ -211,11 +211,14 @@ class TestExecuteScan:
         refreshed = await session.get(Project, project_id)
         assert refreshed.framework == "Python"
 
-    async def test_only_the_built_scanners_report(
+    async def test_only_categories_that_assessed_something_report(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
     ) -> None:
         """Categories with no scanner cost their full weight, which is honest —
-        nothing assessed them."""
+        nothing assessed them. So does a category whose every check was
+        skipped: the fixture is a plain library, so all three scalability
+        checks ask what a second instance would do and none of them apply.
+        """
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
@@ -223,10 +226,12 @@ class TestExecuteScan:
         statuses = (await reload_scan(session, scan.id)).category_status
         reported = {c for c, s in statuses.items() if s == "completed"}
 
-        # Derived from the registry so this keeps passing as scanners land,
-        # while still failing if one stops reporting.
-        assert reported == set(registry.SCANNERS)
-        assert set(statuses) - reported == set(SCAN_CATEGORIES) - set(registry.SCANNERS)
+        assert reported == set(registry.SCANNERS) - {"scalability"}
+        # Two distinct reasons a category does not report, and both cost its
+        # weight: no scanner exists for it, or every check it ran was skipped.
+        assert set(statuses) - reported == (set(SCAN_CATEGORIES) - set(registry.SCANNERS)) | {
+            "scalability"
+        }
 
     async def test_persists_the_findings(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
@@ -252,20 +257,25 @@ class TestExecuteScan:
         observability checks are service-only and it is detected as plain
         Python. Reliability scores full marks for the same reason: no health
         check is expected of a library, and it makes no outbound calls and
-        swallows no errors. Scalability scores full marks because every one of
-        its checks is service-only, so a library reports nothing.
+        swallows no errors.
 
-        Security also scores clean: no credential files, no secrets, no debug
-        flag, no TLS overrides, and the fixture declares no env-file usage for
-        the .gitignore check to care about. With all six scanners registered,
-        every category reports and a spotless repo really can reach 100.
+        Scalability contributes **nothing**, and that is the interesting
+        number here: all three of its checks are service-only, so on a library
+        every one is skipped and the category assessed nothing at all. Paying
+        it the full 10 for work nobody did was the same mistake as scoring an
+        empty repository 77 — visible only once checks reported their outcomes
+        individually.
+
+        Security scores clean: no credential files, no secrets, no debug flag,
+        no TLS overrides, and enough checks really ran for the category to have
+        earned it.
         """
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
-        assert finished.score == 69
+        assert finished.score == 59
         assert finished.scoring_version == "v1"
 
     async def test_records_what_each_category_scored(
@@ -278,13 +288,15 @@ class TestExecuteScan:
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
+        # No scalability entry: every one of its checks was skipped, so the
+        # category assessed nothing and does not appear among those that
+        # reported a score.
         assert finished.category_scores == {
             "security": 25,
             "architecture": 10,
             "deployment": 0,
             "reliability": 20,
             "observability": 4,
-            "scalability": 10,
         }
         assert sum(finished.category_scores.values()) == finished.score
 

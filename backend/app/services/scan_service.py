@@ -119,6 +119,26 @@ async def list_scans(
     return result.all()
 
 
+async def get_previous_completed_scan(db: AsyncSession, *, scan: Scan) -> Scan | None:
+    """The most recent completed scan of the same project before this one.
+
+    Completed only: a failed scan has no score and nothing to compare against.
+    No owner argument because the caller has already proved ownership of
+    `scan`, and a scan's siblings belong to the same project by definition.
+    """
+    return await db.scalar(
+        select(Scan)
+        .where(
+            Scan.project_id == scan.project_id,
+            Scan.id != scan.id,
+            Scan.status == ScanStatus.COMPLETED,
+            Scan.created_at < scan.created_at,
+        )
+        .order_by(Scan.created_at.desc())
+        .limit(1)
+    )
+
+
 async def get_scan(db: AsyncSession, *, owner: User, scan_id: uuid.UUID) -> Scan | None:
     return await db.scalar(
         select(Scan)

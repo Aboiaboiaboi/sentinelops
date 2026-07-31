@@ -12,7 +12,7 @@
  * in hooks/ removes fixture mode entirely.
  */
 import { ApiError } from '@/api/client';
-import type { CheckResult } from '@/types/check';
+import type { CheckResult, ScanComparison } from '@/types/check';
 import type { Finding } from '@/types/finding';
 import type { GitHubInstallation, GitHubRepository } from '@/types/github';
 import type { CreateProjectInput, Project } from '@/types/project';
@@ -271,6 +271,52 @@ export const store = {
 
   listFindings: (scanId: string) =>
     delay(isFinished(scanId) ? [...fixtureFindings] : []),
+
+  // An improvement with one regression, so the comparison shows both
+  // directions and the "no longer assessed" case that is not a drop.
+  getComparison: (scanId: string): Promise<ScanComparison> =>
+    delay(
+      isFinished(scanId)
+        ? {
+            previous_scan_id: 'scan_previous',
+            previous_created_at: new Date(Date.now() - 86_400_000).toISOString(),
+            previous_score: 52,
+            comparable: true,
+            reason: null,
+            score_delta: DEMO_SCORE - 52,
+            categories: [
+              { category: 'security', previous: 8, current: 14, delta: 6 },
+              { category: 'observability', previous: 10, current: 8, delta: -2 },
+              { category: 'scalability', previous: 3, current: null, delta: null },
+            ],
+            checks: [
+              {
+                id: 'observability.telemetry',
+                title: 'Metrics or error tracking',
+                category: 'observability',
+                previous_outcome: 'passed',
+                current_outcome: 'failed',
+              },
+              {
+                id: 'security.debug_mode',
+                title: 'Debug mode off',
+                category: 'security',
+                previous_outcome: 'failed',
+                current_outcome: 'passed',
+              },
+            ],
+          }
+        : {
+            previous_scan_id: null,
+            previous_created_at: null,
+            previous_score: null,
+            comparable: false,
+            reason: null,
+            score_delta: null,
+            categories: [],
+            checks: [],
+          },
+    ),
 
   // A slice of each outcome, so the disclosure demonstrates the distinction it
   // exists for: a skipped check is not a passed one.

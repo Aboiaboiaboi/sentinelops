@@ -184,6 +184,30 @@ class TestPassedIsDistinctFromSkipped:
         )
 
 
+class TestAllSkippedMeansNotAssessed:
+    """A category that ran nothing must not be paid as though it had.
+
+    Found the first time check outcomes were visible: `Plazmaz/leaky-repo` is
+    not a service, so all three scalability checks skipped — and the category
+    collected the full 10 for work nobody did. The same mistake as scoring an
+    empty repository 77, one level down.
+    """
+
+    def test_scalability_assesses_nothing_on_a_library(self, library_repo: Path) -> None:
+        results = SCANNERS["scalability"].scan(RepositoryIndex.build(library_repo, framework=None))
+
+        assert all(r.outcome is CheckOutcome.SKIPPED for r in results)
+
+    def test_a_single_pass_is_enough_to_have_earned_the_category(self, library_repo: Path) -> None:
+        """The rule only bites when *nothing* ran. Reliability on the same
+        library skips its service-only checks but really does verify that
+        errors are not swallowed, so it keeps its weight."""
+        results = SCANNERS["reliability"].scan(RepositoryIndex.build(library_repo, framework=None))
+
+        assert any(r.outcome is CheckOutcome.PASSED for r in results)
+        assert not all(r.outcome is CheckOutcome.SKIPPED for r in results)
+
+
 class TestScoringIsUnchanged:
     @ALL_SCANNERS
     @pytest.mark.parametrize("repo_name", ["service_repo", "library_repo", "bare_repo"])

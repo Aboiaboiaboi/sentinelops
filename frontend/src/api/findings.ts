@@ -1,6 +1,6 @@
 import { request } from './client';
 import type { Finding } from '@/types/finding';
-import type { CheckResult } from '@/types/check';
+import type { CheckResult, ScanComparison } from '@/types/check';
 
 export function listFindings(scanId: string): Promise<Finding[]> {
   return request<Finding[]>(`/scans/${scanId}/findings`);
@@ -15,4 +15,14 @@ export function listFindings(scanId: string): Promise<Finding[]> {
  */
 export function listChecks(scanId: string): Promise<CheckResult[]> {
   return request<CheckResult[]>(`/scans/${scanId}/checks`);
+}
+
+/**
+ * How this scan differs from the previous completed scan of the same project.
+ *
+ * Always 200 — no earlier scan is a normal state, not an error, so the client
+ * renders nothing rather than handling a failure.
+ */
+export function getComparison(scanId: string): Promise<ScanComparison> {
+  return request<ScanComparison>(`/scans/${scanId}/comparison`);
 }

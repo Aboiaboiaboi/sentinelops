@@ -23,6 +23,48 @@ class CheckResultRead(BaseModel):
     reason: str | None = None
 
 
+class CategoryDeltaRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    category: str
+    previous: int | None
+    current: int | None
+    #: Null when either side did not report — which is different from zero, and
+    #: different again from a drop. A category can stop being assessed.
+    delta: int | None
+
+
+class CheckChangeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    category: str
+    previous_outcome: CheckOutcome
+    current_outcome: CheckOutcome
+
+
+class ScanComparisonRead(BaseModel):
+    """Shape of GET /scans/{id}/comparison.
+
+    `previous_scan_id` null means there was nothing to compare against — the
+    first scan of a project, or no earlier one that completed. `comparable`
+    false with a `reason` means there *is* an earlier scan but the difference
+    would mislead; the reason is written to be shown to the user.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    previous_scan_id: uuid.UUID | None
+    previous_created_at: UtcDatetime | None
+    previous_score: int | None
+    comparable: bool
+    reason: str | None
+    score_delta: int | None
+    categories: list[CategoryDeltaRead]
+    checks: list[CheckChangeRead]
+
+
 class ScanRead(BaseModel):
     """Shape of GET /scans/{id} — the endpoint the client polls.
 
