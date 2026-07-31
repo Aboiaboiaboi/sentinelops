@@ -11,7 +11,9 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.14",
     "bcrypt>=4.1",
-    "pyjwt>=2.10",
+    # [crypto] pulls in `cryptography` for RS256 — the GitHub App JWT is
+    # asymmetric, unlike the HS256 auth cookie.
+    "pyjwt[crypto]>=2.10",
     "pydantic[email]>=2.10",
     "slowapi>=0.1.9",
     "arq>=0.28",

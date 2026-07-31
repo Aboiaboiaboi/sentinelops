@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     login_rate_limit: str = "10/minute"
     signup_rate_limit: str = "5/minute"
 
+    # GitHub App credentials for private-repository access. Both empty by
+    # default: the feature simply reports itself as unconfigured, and public
+    # repositories keep working without a GitHub account of any kind.
+    #
+    # The private key is supplied base64-encoded because it is a multi-line
+    # PEM, and multi-line values do not survive .env files or most secret
+    # managers' environment injection. The exact encode command is documented
+    # in .env.example beside the variable.
+    #
+    # In production this belongs in a secret manager, not a committed file —
+    # it can mint access to every installed user's repositories.
+    github_app_client_id: str = ""
+    github_app_private_key_b64: str = ""
+
     secret_key: str = DEV_SECRET_KEY
     jwt_algorithm: str = "HS256"
     # Seven days. There is no refresh-token flow and no session endpoint, so a
