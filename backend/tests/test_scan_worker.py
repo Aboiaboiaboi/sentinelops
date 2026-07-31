@@ -168,6 +168,36 @@ class TestExecuteScan:
 
         assert (await reload_scan(session, scan.id)).status is ScanStatus.COMPLETED
 
+    async def test_a_repository_with_no_source_scores_zero(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        """Every scanner stays silent rather than guessing, which is right per
+        check — but summed up, an *empty* repository scored 77/100, beating a
+        real project. Silence must not be priced as excellence: no source code
+        means no category reports and the score is zero, with the categories-
+        reported count telling the user why."""
+        repo = init_repo(tmp_path / "empty")
+        (repo / "README.md").write_text("# just a readme\n", encoding="utf-8")
+        commit_all(repo)
+
+        user = User(email="owner@example.com", password_hash="x")
+        session.add(user)
+        await session.flush()
+        project = Project(user_id=user.id, name="empty", repository_url=repo.as_uri())
+        session.add(project)
+        await session.flush()
+        scan = Scan(project_id=project.id, category_status=scan_service.initial_category_status())
+        session.add(scan)
+        await session.commit()
+
+        await execute_scan(session, scan_id=scan.id)
+
+        finished = await reload_scan(session, scan.id)
+        assert finished.status is ScanStatus.COMPLETED
+        assert finished.score == 0
+        assert set(finished.category_status.values()) == {"failed"}
+        assert finished.category_scores == {}
+
     async def test_records_the_detected_framework(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
     ) -> None:

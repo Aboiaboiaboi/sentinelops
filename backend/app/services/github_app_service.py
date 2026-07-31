@@ -58,6 +58,16 @@ class InstallationTokenError(Exception):
     """GitHub refused to mint a token for a reason other than 404."""
 
 
+class GitHubApiError(Exception):
+    """A GitHub API call failed after authentication succeeded."""
+
+
+# The repository picker fetches at most this many pages of 100. A user with
+# more repositories than that sees the first 500 alphabetically — a bounded,
+# explainable limit rather than an unbounded crawl of someone's organisation.
+MAX_REPOSITORY_PAGES = 5
+
+
 @dataclass
 class _CachedToken:
     token: str
@@ -122,16 +132,7 @@ class GitHubAppAuth:
             return minted.token
 
     async def _mint(self, installation_id: int) -> _CachedToken:
-        async with httpx.AsyncClient(
-            base_url=GITHUB_API,
-            transport=self._transport,
-            timeout=15.0,
-            headers={
-                "Authorization": f"Bearer {self.build_app_jwt()}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        ) as client:
+        async with self._client(bearer=self.build_app_jwt()) as client:
             try:
                 response = await client.post(f"/app/installations/{installation_id}/access_tokens")
             except httpx.HTTPError as exc:
@@ -153,6 +154,110 @@ class GitHubAppAuth:
             token=body["token"],
             usable_until=time.time() + 3600 - TOKEN_SAFETY_MARGIN_SECONDS,
         )
+
+    async def can_access(self, installation_id: int, full_name: str) -> bool:
+        """Whether this installation's grant covers `full_name`.
+
+        Asked before a private clone, so the worker attaches credentials only
+        to repositories the user actually granted — a 404 here means "not in
+        this installation", which for the caller is simply false, not an error.
+        """
+        token = await self.installation_token(installation_id)
+        async with self._client(bearer=token) as client:
+            try:
+                response = await client.get(f"/repos/{full_name}")
+            except httpx.HTTPError as exc:
+                raise GitHubApiError(f"GitHub unreachable: {exc}") from exc
+
+        if response.status_code == 200:
+            return True
+        if response.status_code == 404:
+            return False
+        raise GitHubApiError(
+            f"GitHub returned {response.status_code} checking access to {full_name}"
+        )
+
+    async def installation_account(self, installation_id: int) -> str:
+        """The login of the account an installation sits on, for display.
+
+        Authenticated as the App (JWT), not the installation — GitHub's setup
+        redirect carries only the installation id, and this is how the id
+        becomes a name a user will recognise in the UI.
+        """
+        async with self._client(bearer=self.build_app_jwt()) as client:
+            try:
+                response = await client.get(f"/app/installations/{installation_id}")
+            except httpx.HTTPError as exc:
+                raise GitHubApiError(f"GitHub unreachable: {exc}") from exc
+
+        if response.status_code == 404:
+            raise GitHubAppNotInstalled(f"installation {installation_id} not found")
+        if response.status_code != 200:
+            raise GitHubApiError(
+                f"GitHub returned {response.status_code} reading installation "
+                f"{installation_id}: {response.text[:200]}"
+            )
+        return response.json()["account"]["login"]
+
+    async def list_repositories(self, installation_id: int) -> list[dict]:
+        """Every repository this installation can see, as GitHub returns them.
+
+        Paginated at 100 per page up to MAX_REPOSITORY_PAGES; the loop stops
+        early on a short page. Authenticated with the installation token, so
+        the answer is exactly what the user granted — nothing needs filtering
+        on our side.
+        """
+        token = await self.installation_token(installation_id)
+        repositories: list[dict] = []
+
+        async with self._client(bearer=token) as client:
+            for page in range(1, MAX_REPOSITORY_PAGES + 1):
+                try:
+                    response = await client.get(
+                        "/installation/repositories",
+                        params={"per_page": 100, "page": page},
+                    )
+                except httpx.HTTPError as exc:
+                    raise GitHubApiError(f"GitHub unreachable: {exc}") from exc
+
+                if response.status_code == 404:
+                    raise GitHubAppNotInstalled(f"installation {installation_id} not found")
+                if response.status_code != 200:
+                    raise GitHubApiError(
+                        f"GitHub returned {response.status_code} listing repositories: "
+                        f"{response.text[:200]}"
+                    )
+
+                batch = response.json()["repositories"]
+                repositories.extend(batch)
+                if len(batch) < 100:
+                    break
+
+        return repositories
+
+    def _client(self, *, bearer: str) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=GITHUB_API,
+            transport=self._transport,
+            timeout=15.0,
+            headers={
+                "Authorization": f"Bearer {bearer}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+
+
+def git_credential_header(token: str) -> str:
+    """An installation token as the header git will send.
+
+    The documented form for App tokens over git-HTTP: Basic auth with
+    `x-access-token` as the username. Handed to git via `--config-env` and an
+    environment variable — never the URL, where it would persist into the
+    clone's .git/config and show in process listings.
+    """
+    credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return f"Authorization: Basic {credentials}"
 
 
 def decode_private_key(encoded: str) -> str:

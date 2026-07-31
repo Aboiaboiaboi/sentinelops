@@ -1,6 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { categoryLabel } from '@/lib/categories';
 import { cn } from '@/lib/utils';
 import type { Finding, Severity } from '@/types/finding';
 
@@ -27,7 +26,9 @@ export function FindingCard({ finding }: { finding: Finding }) {
             </Badge>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">{categoryLabel(finding.category)}</p>
+        {/* No category label here: FindingsList groups by category, so the
+            section heading already says it and repeating it on every card was
+            noise. */}
       </CardHeader>
 
       <CardContent className="space-y-3 text-sm">

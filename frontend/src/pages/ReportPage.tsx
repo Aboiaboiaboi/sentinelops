@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryBreakdownChart } from '@/components/CategoryBreakdownChart';
-import { FindingCard } from '@/components/FindingCard';
+import { FindingsList } from '@/components/FindingsList';
 import { ScoreGauge } from '@/components/ScoreGauge';
 import { reportUrl } from '@/api/scans';
 import { reportedCount, toCategoryScores } from '@/lib/categories';
@@ -119,9 +119,7 @@ export default function ReportPage() {
         {findings?.length === 0 && (
           <p className="text-sm text-muted-foreground">No findings recorded.</p>
         )}
-        {findings?.map((finding) => (
-          <FindingCard key={finding.id} finding={finding} />
-        ))}
+        {findings && findings.length > 0 && <FindingsList findings={findings} />}
       </section>
     </div>
   );

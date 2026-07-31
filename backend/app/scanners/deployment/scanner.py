@@ -19,12 +19,13 @@ CATEGORY = "deployment"
 
 # Impacts. Both paths through the checks below total the category weight of 15:
 # a repository with no deployment config at all loses 11 + 4, and one with a
-# Dockerfile can lose 4 + 4 + 3 + 4.
+# Dockerfile can lose 3 + 4 + 2 + 4 + 2.
 _NO_DEPLOYMENT_CONFIG = 11
-_UNPINNED_BASE_IMAGE = 4
+_UNPINNED_BASE_IMAGE = 3
 _RUNS_AS_ROOT = 4
-_NO_HEALTHCHECK = 3
+_NO_HEALTHCHECK = 2
 _NO_CI_PIPELINE = 4
+_NO_DOCKERIGNORE = 2
 
 _DOCKERFILE_NAMES = ("dockerfile",)
 _COMPOSE_NAMES = (
@@ -141,6 +142,78 @@ def _is_orchestration(path: Path, root: Path) -> bool:
     return any(part.lower() in _ORCHESTRATION_DIRECTORIES for part in relative.parts[:-1])
 
 
+def _compose_unpinned_images(content: str) -> list[str]:
+    """Floating `image:` references in a Compose file.
+
+    Minimal structural parse rather than a bare regex over lines, because one
+    distinction is load-bearing: a service with a `build:` key uses `image:`
+    as the *name for what it builds*, not as something pulled from a registry
+    — flagging `image: myapp:latest` on a built service would hit nearly
+    every real Compose file. Interpolated values (`${TAG}`) are skipped too:
+    the environment decides those, which is the correct pattern.
+    """
+    services: list[dict] = []
+    current: dict | None = None
+    in_services = False
+    service_indent: int | None = None
+
+    for raw in content.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+
+        if indent == 0:
+            in_services = stripped == "services:"
+            current, service_indent = None, None
+            continue
+        if not in_services:
+            continue
+
+        is_key_only = stripped.endswith(":") and ":" not in stripped[:-1]
+        if is_key_only and (service_indent is None or indent == service_indent):
+            service_indent = service_indent or indent
+            if indent == service_indent:
+                current = {"image": None, "build": False}
+                services.append(current)
+                continue
+
+        if current is None or service_indent is None or indent <= service_indent:
+            continue
+        if stripped.startswith("image:"):
+            current["image"] = stripped.split(":", 1)[1].strip().strip("\"'")
+        elif stripped == "build:" or stripped.startswith("build:"):
+            current["build"] = True
+
+    return [
+        service["image"]
+        for service in services
+        if service["image"]
+        and not service["build"]
+        and "${" not in service["image"]
+        and not _is_pinned(service["image"], set())
+    ]
+
+
+# A COPY/ADD that brings in the entire build context. `--from=` copies are
+# excluded — those read from an earlier stage, not from the directory.
+_BROAD_COPY_SOURCES = {".", "./"}
+
+
+def _copies_full_context(stage: _Stage) -> bool:
+    for keyword in ("copy", "add"):
+        for line in stage.instructions.get(keyword, []):
+            tokens = line.split()
+            if any(token.lower().startswith("--from=") for token in tokens):
+                continue
+            arguments = [token for token in tokens[1:] if not token.startswith("--")]
+            if len(arguments) >= 2 and any(
+                source in _BROAD_COPY_SOURCES for source in arguments[:-1]
+            ):
+                return True
+    return False
+
+
 def _runs_as_root(stage: _Stage) -> bool:
     users = stage.instructions.get("user", [])
     if not users:
@@ -160,18 +233,23 @@ class DeploymentScanner:
         # other scanners' walks meant traversing the same repository roughly a
         # dozen times per scan.
         dockerfiles: list[Path] = []
+        compose_files: list[Path] = []
         has_orchestration = False
         for path in repo.files:
             if _is_dockerfile(path):
                 dockerfiles.append(path)
+                continue
+            if path.name.lower() in _COMPOSE_NAMES:
+                compose_files.append(path)
+                has_orchestration = True
             elif not has_orchestration and _is_orchestration(path, repo.path):
                 has_orchestration = True
 
         findings: list[ScanFinding] = []
         if not dockerfiles and not has_orchestration:
             findings.append(self._no_deployment_config())
-        elif dockerfiles:
-            findings.extend(self._check_dockerfiles(dockerfiles, repo))
+        else:
+            findings.extend(self._check_images(dockerfiles, compose_files, repo))
 
         findings.extend(self._check_ci(repo))
         return findings
@@ -193,13 +271,14 @@ class DeploymentScanner:
             score_impact=_NO_DEPLOYMENT_CONFIG,
         )
 
-    def _check_dockerfiles(
-        self, dockerfiles: list[Path], repo: RepositoryIndex
+    def _check_images(
+        self, dockerfiles: list[Path], compose_files: list[Path], repo: RepositoryIndex
     ) -> list[ScanFinding]:
         unpinned: list[str] = []
         root_stages: list[str] = []
         healthchecked = False
         runnable_seen = False
+        broad_copy: str | None = None
 
         for path in dockerfiles:
             relative = repo.relative(path)
@@ -209,6 +288,8 @@ class DeploymentScanner:
             for stage in stages:
                 if not _is_pinned(stage.base, names):
                     unpinned.append(f"{relative} ({stage.base})")
+                if broad_copy is None and _copies_full_context(stage):
+                    broad_copy = relative
                 if not stage.is_runnable:
                     continue
                 runnable_seen = True
@@ -217,7 +298,33 @@ class DeploymentScanner:
                 if "healthcheck" in stage.instructions:
                     healthchecked = True
 
+        # The same pinning question asked of Compose: `image: postgres` pulls
+        # a different database on different days, exactly like a floating FROM.
+        for path in compose_files:
+            relative = repo.relative(path)
+            for image in _compose_unpinned_images(repo.read(path)):
+                unpinned.append(f"{relative} ({image})")
+
         findings: list[ScanFinding] = []
+        if broad_copy is not None and not repo.has_root_entry(".dockerignore"):
+            findings.append(
+                ScanFinding(
+                    category=CATEGORY,
+                    severity=Severity.MEDIUM,
+                    title="Full build context copied with no .dockerignore",
+                    description=(
+                        f"{broad_copy} copies the entire directory into the image and there is "
+                        "no .dockerignore. Whatever is lying around at build time ships in the "
+                        "layers — local env files, the .git history, dependency caches — and "
+                        "stays retrievable from the image even if a later layer deletes it."
+                    ),
+                    recommendation=(
+                        "Add a .dockerignore excluding at least .git, .env* and dependency "
+                        "directories — or copy only the paths the image actually needs."
+                    ),
+                    score_impact=_NO_DOCKERIGNORE,
+                )
+            )
         if unpinned:
             findings.append(
                 ScanFinding(

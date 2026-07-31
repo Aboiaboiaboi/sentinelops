@@ -131,11 +131,15 @@ class ScanTarget:
 
     Relationships are configured `lazy="raise_on_sql"`, so reaching a scan's
     project through the attribute would raise rather than quietly emitting a
-    query. Selecting the two columns needed is both explicit and one round trip.
+    query. Selecting the columns needed is both explicit and one round trip.
+
+    `user_id` is here so the worker can look up the owner's GitHub App
+    installations when the repository turns out to need credentials.
     """
 
     project_id: uuid.UUID
     repository_url: str
+    user_id: uuid.UUID
 
 
 async def get_scan_target(db: AsyncSession, *, scan_id: uuid.UUID) -> ScanTarget | None:
@@ -146,14 +150,14 @@ async def get_scan_target(db: AsyncSession, *, scan_id: uuid.UUID) -> ScanTarget
     """
     row = (
         await db.execute(
-            select(Project.id, Project.repository_url)
+            select(Project.id, Project.repository_url, Project.user_id)
             .join(Scan, Scan.project_id == Project.id)
             .where(Scan.id == scan_id)
         )
     ).first()
     if row is None:
         return None
-    return ScanTarget(project_id=row[0], repository_url=row[1])
+    return ScanTarget(project_id=row[0], repository_url=row[1], user_id=row[2])
 
 
 async def record_findings(

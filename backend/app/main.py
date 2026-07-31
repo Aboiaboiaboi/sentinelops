@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
-from app.api import auth, findings, projects, scans
+from app.api import auth, findings, github, projects, scans
 from app.config import get_settings
 from app.logging import configure_logging
 from app.rate_limit import limiter, rate_limit_exceeded_handler
@@ -67,6 +67,7 @@ app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(scans.router)
 app.include_router(findings.router)
+app.include_router(github.router)
 
 
 @app.get("/health")

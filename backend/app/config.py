@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     # it can mint access to every installed user's repositories.
     github_app_client_id: str = ""
     github_app_private_key_b64: str = ""
+    # The App's URL slug, for the install redirect:
+    # https://github.com/apps/<slug>/installations/new
+    github_app_slug: str = ""
+
+    # Where GitHub's post-install redirect sends the browser back to. Separate
+    # from cors_origins because this is a navigation target, not an allowed
+    # caller.
+    frontend_url: str = "http://localhost:5173"
 
     secret_key: str = DEV_SECRET_KEY
     jwt_algorithm: str = "HS256"

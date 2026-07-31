@@ -14,6 +14,7 @@ import logging
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,10 +23,82 @@ from app.models import SCAN_CATEGORIES, CategoryStatus
 from app.scanners import registry
 from app.scanners.base import RepositoryIndex, ScanFinding
 from app.scanners.framework import detect_framework
-from app.services import project_service, scan_service, scoring_service
+from app.services import github_service, project_service, scan_service, scoring_service
+from app.services.github_app_service import (
+    GitHubApiError,
+    GitHubAppNotConfigured,
+    GitHubAppNotInstalled,
+    InstallationTokenError,
+    get_github_app_auth,
+    git_credential_header,
+)
 from app.workers.repo import CloneError, cloned_repository
 
 logger = logging.getLogger(__name__)
+
+
+def _github_full_name(repository_url: str) -> str | None:
+    """The `owner/repo` a github.com URL points at, or None for anything else.
+
+    Only github.com URLs can be authenticated with our App, so everything else
+    short-circuits to an anonymous clone without touching the GitHub API.
+    """
+    parsed = urlparse(repository_url)
+    if parsed.hostname not in {"github.com", "www.github.com"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 2:
+        return None
+    return f"{parts[0]}/{parts[1].removesuffix('.git')}"
+
+
+async def resolve_credential(
+    db: AsyncSession, *, repository_url: str, user_id: uuid.UUID
+) -> str | None:
+    """Credentials for this clone, or None to clone anonymously.
+
+    Deterministic rather than try-and-retry: for a github.com repository, each
+    of the owner's installations is asked whether its grant covers the repo,
+    and the first that does supplies a token. The token becomes a header via
+    `git_credential_header` — never part of the URL.
+
+    Every failure path here degrades to anonymous. A public repository must
+    keep scanning when the App is unconfigured, the user has no installations,
+    or GitHub is having a bad day — worst case, a *private* clone then fails
+    exactly as it would have without this function.
+    """
+    full_name = _github_full_name(repository_url)
+    if full_name is None:
+        return None
+
+    installation_ids = await github_service.installation_ids_for_user(db, user_id=user_id)
+    if not installation_ids:
+        return None
+
+    try:
+        auth = get_github_app_auth()
+    except GitHubAppNotConfigured:
+        return None
+
+    for installation_id in installation_ids:
+        try:
+            if await auth.can_access(installation_id, full_name):
+                logger.info(
+                    "cloning with github app credentials",
+                    extra={"installation_id": installation_id, "repository": full_name},
+                )
+                return git_credential_header(await auth.installation_token(installation_id))
+        except GitHubAppNotInstalled:
+            # Stale row — the user uninstalled the App there. Another
+            # installation may still cover the repository.
+            continue
+        except (GitHubApiError, InstallationTokenError) as exc:
+            logger.warning(
+                "github credential resolution failed, cloning anonymously",
+                extra={"installation_id": installation_id, "reason": str(exc)},
+            )
+            return None
+    return None
 
 
 async def run_scan(ctx: dict[str, Any], scan_id: str) -> None:
@@ -56,8 +129,14 @@ async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
         extra={"scan_id": str(scan_id), "repository_url": target.repository_url},
     )
 
+    credential_header = await resolve_credential(
+        db, repository_url=target.repository_url, user_id=target.user_id
+    )
+
     try:
-        async with cloned_repository(target.repository_url) as repo_path:
+        async with cloned_repository(
+            target.repository_url, credential_header=credential_header
+        ) as repo_path:
             # Detected first so the scanners can see it. Whether a missing
             # health endpoint is a problem depends on whether this is a service
             # at all, and only the framework answers that.
@@ -168,6 +247,21 @@ async def _run_scanners(
         await scan_service.record_category_result(
             db, scan_id=scan_id, category=category, status=status
         )
+
+    # A repository with no source code is not an application, and a category
+    # that assessed nothing must not report as if it assessed something. Every
+    # scanner is individually built to stay silent rather than guess — the
+    # right behaviour per check, but summed up it meant an *empty* repository
+    # scored 77/100: silence priced as excellence. Found when a README-only
+    # test repo outscored a real Flask project by four points.
+    if not index.source_files:
+        logger.info(
+            "repository has no source code, nothing to assess",
+            extra={"scan_id": str(scan_id)},
+        )
+        for category in SCAN_CATEGORIES:
+            await record(category, CategoryStatus.FAILED)
+        return findings, category_status
 
     for category in SCAN_CATEGORIES:
         scanner = registry.get_scanner(category)

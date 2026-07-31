@@ -41,3 +41,10 @@ class User(Base):
         # an explicit error naming the relationship instead.
         lazy="raise_on_sql",
     )
+
+    github_installations: Mapped[list["GitHubInstallation"]] = relationship(  # noqa: F821
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise_on_sql",
+    )

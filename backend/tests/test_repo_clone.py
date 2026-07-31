@@ -152,6 +152,32 @@ class TestCloneRepository:
         with pytest.raises(CloneTooLarge, match="larger than 1 bytes"):
             clone_repository(source_repo.as_uri(), checkout, hooks_dir=hooks, limits=tiny)
 
+    def test_a_credential_header_leaves_no_trace_in_the_checkout(
+        self, source_repo: Path, workspace: tuple[Path, Path]
+    ) -> None:
+        """The token reaches git through --config-env and an environment
+        variable. Passed as `-c http.extraHeader=...` or embedded in the URL it
+        would persist into the clone's .git/config — readable by every scanner
+        and, in Phase 3, by sandboxed third-party tools."""
+        checkout, hooks = workspace
+        marker = "Authorization: Basic c2VjcmV0LW1hcmtlcg=="
+
+        clone_repository(
+            source_repo.as_uri(),
+            checkout,
+            hooks_dir=hooks,
+            limits=LIMITS,
+            credential_header=marker,
+        )
+
+        for config_name in ("config", "config.worktree"):
+            config = checkout / ".git" / config_name
+            if config.exists():
+                content = config.read_text(encoding="utf-8")
+                assert "extraHeader" not in content
+                assert marker not in content
+                assert "SENTINELOPS_GIT_AUTH" not in content
+
     def test_symlinks_are_not_followed_when_measuring(
         self, source_repo: Path, workspace: tuple[Path, Path], tmp_path: Path
     ) -> None:

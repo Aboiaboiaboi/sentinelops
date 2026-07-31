@@ -251,3 +251,82 @@ class TestRobustness:
         _write(tmp_path, "README.md", "# docs\n")
 
         assert "No deployment configuration" in _titles(tmp_path)
+
+
+class TestComposeImagePinning:
+    """The same reproducibility question asked of Compose. `image: postgres`
+    pulls a different database on different days, exactly like a floating FROM.
+    """
+
+    def test_flags_a_floating_service_image(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            "services:\n  db:\n    image: postgres\n",
+        )
+
+        assert "Base image is not pinned" in _titles(tmp_path)
+
+    def test_accepts_a_pinned_service_image(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            "services:\n  db:\n    image: postgres:17-alpine\n",
+        )
+
+        assert "Base image is not pinned" not in _titles(tmp_path)
+
+    def test_a_built_service_names_its_output_rather_than_pulling(self, tmp_path: Path) -> None:
+        """With a `build:` key, `image:` is the name for what is built locally,
+        not something pulled from a registry. Flagging it would hit nearly every
+        real Compose file."""
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            "services:\n  api:\n    build: .\n    image: myapp:latest\n",
+        )
+
+        assert "Base image is not pinned" not in _titles(tmp_path)
+
+    def test_an_interpolated_tag_is_the_environments_decision(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            "services:\n  db:\n    image: postgres:${PG_VERSION}\n",
+        )
+
+        assert "Base image is not pinned" not in _titles(tmp_path)
+
+
+class TestDockerignore:
+    def test_flags_a_full_context_copy_with_no_dockerignore(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Dockerfile", 'FROM python:3.14-slim\nCOPY . /app\nUSER app\nCMD ["x"]\n')
+
+        assert "Full build context copied with no .dockerignore" in _titles(tmp_path)
+
+    def test_a_dockerignore_clears_it(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Dockerfile", 'FROM python:3.14-slim\nCOPY . /app\nUSER app\nCMD ["x"]\n')
+        _write(tmp_path, ".dockerignore", ".git\n.env*\n")
+
+        assert "Full build context copied with no .dockerignore" not in _titles(tmp_path)
+
+    def test_copying_named_paths_is_not_a_full_context_copy(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "Dockerfile",
+            'FROM python:3.14-slim\nCOPY app/ /app\nCOPY pyproject.toml /\nUSER app\nCMD ["x"]\n',
+        )
+
+        assert "Full build context copied with no .dockerignore" not in _titles(tmp_path)
+
+    def test_a_stage_to_stage_copy_reads_no_build_context(self, tmp_path: Path) -> None:
+        """`COPY --from=builder . /app` copies from an earlier stage, not from
+        the directory, so .dockerignore is irrelevant to it."""
+        _write(
+            tmp_path,
+            "Dockerfile",
+            "FROM python:3.14-slim AS builder\nRUN true\n"
+            'FROM python:3.14-slim\nCOPY --from=builder . /app\nUSER app\nCMD ["x"]\n',
+        )
+
+        assert "Full build context copied with no .dockerignore" not in _titles(tmp_path)

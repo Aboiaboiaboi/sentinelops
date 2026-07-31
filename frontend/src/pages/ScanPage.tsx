@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryBreakdownChart } from '@/components/CategoryBreakdownChart';
-import { FindingCard } from '@/components/FindingCard';
+import { FindingsList } from '@/components/FindingsList';
 import { ScanStatusBadge } from '@/components/ScanStatusBadge';
 import { ScoreGauge } from '@/components/ScoreGauge';
 import { reportedCount, toCategoryScores } from '@/lib/categories';
@@ -173,13 +173,7 @@ export default function ScanPage() {
           </Card>
         )}
 
-        {findings && findings.length > 0 && (
-          <div className="space-y-3">
-            {findings.map((finding) => (
-              <FindingCard key={finding.id} finding={finding} />
-            ))}
-          </div>
-        )}
+        {findings && findings.length > 0 && <FindingsList findings={findings} />}
       </section>
     </div>
   );
