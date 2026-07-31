@@ -16,7 +16,7 @@ to be inconsistent across, so none of this applies to one.
 
 import re
 
-from app.scanners.base import RepositoryIndex, ScanFinding, Severity
+from app.scanners.base import RepositoryIndex, ScanFinding, Severity, code_only
 
 CATEGORY = "scalability"
 
@@ -126,20 +126,6 @@ _POOLING_DISABLED = re.compile(
 _MIGRATION_DIRECTORIES = frozenset({"alembic", "migrations", "migrate", "migration", "db"})
 
 
-# Evidence has to come from code, not from commentary about code. A comment
-# explaining why pooling was disabled is not pooling being disabled, and a
-# repository that documents its configuration would otherwise be judged on the
-# documentation. This matters more than it looks: linters, scanners and
-# infrastructure tooling — the repositories most likely to be pointed at
-# SentinelOps — are full of prose naming the very patterns being searched for.
-_COMMENT_LINE = re.compile(r"^\s*(?:#|//|/\*|\*(?!/)|--)")
-
-
-def _code_only(content: str) -> str:
-    """Drop whole-line comments, preserving line structure for the rest."""
-    return "\n".join(line for line in content.splitlines() if not _COMMENT_LINE.match(line))
-
-
 # Opening a raw driver connection inside request-handling code: a TCP handshake
 # and an authentication round trip per request, and a straight line to
 # exhausting the database's connection limit under load.
@@ -167,7 +153,7 @@ class ScalabilityScanner:
         uses_object_storage = bool(_OBJECT_STORAGE.search(manifests))
 
         for path in repo.production_files:
-            content = _code_only(repo.read(path))
+            content = code_only(repo.read(path))
             if not content:
                 continue
 

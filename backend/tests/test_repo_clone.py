@@ -16,6 +16,7 @@ from app.workers.repo import (
     CloneLimits,
     CloneTimedOut,
     CloneTooLarge,
+    _git_environment,
     clone_repository,
     cloned_repository,
 )
@@ -45,6 +46,37 @@ def workspace(tmp_path: Path) -> tuple[Path, Path]:
     hooks = tmp_path / "nohooks"
     hooks.mkdir()
     return tmp_path / "checkout", hooks
+
+
+class TestGitEnvironment:
+    def test_passes_through_what_the_os_itself_needs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """On Windows a child process without SystemRoot cannot initialise
+        winsock, and every DNS lookup fails with "getaddrinfo() thread failed
+        to start". Never caught here before because these tests clone file://
+        URLs, which resolve no names."""
+        monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+
+        assert _git_environment()["SYSTEMROOT"] == r"C:\Windows"
+
+    def test_does_not_invent_variables_that_are_absent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On Linux the Windows variables do not exist, and an empty-string
+        SystemRoot would be worse than none."""
+        monkeypatch.delenv("SYSTEMROOT", raising=False)
+
+        assert "SYSTEMROOT" not in _git_environment()
+
+    def test_the_host_environment_does_not_leak(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The allowlist is the whole point — a worker holds credentials that
+        must never reach a git subprocess processing a hostile URL."""
+        monkeypatch.setenv("DATABASE_URL", "postgresql://user:secret@host/db")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "not-for-git")
+
+        environment = _git_environment()
+
+        assert "DATABASE_URL" not in environment
+        assert "AWS_SECRET_ACCESS_KEY" not in environment
 
 
 class TestCloneRepository:

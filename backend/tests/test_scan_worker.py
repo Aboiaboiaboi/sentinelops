@@ -225,15 +225,17 @@ class TestExecuteScan:
         swallows no errors. Scalability scores full marks because every one of
         its checks is service-only, so a library reports nothing.
 
-        Security is the only category with no scanner, so it alone stays
-        unreported and costs its full weight of 25.
+        Security also scores clean: no credential files, no secrets, no debug
+        flag, no TLS overrides, and the fixture declares no env-file usage for
+        the .gitignore check to care about. With all six scanners registered,
+        every category reports and a spotless repo really can reach 100.
         """
         scan, _ = scan_of
 
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
-        assert finished.score == 44
+        assert finished.score == 69
         assert finished.scoring_version == "v1"
 
     async def test_records_what_each_category_scored(
@@ -247,6 +249,7 @@ class TestExecuteScan:
 
         finished = await reload_scan(session, scan.id)
         assert finished.category_scores == {
+            "security": 25,
             "architecture": 10,
             "deployment": 0,
             "reliability": 20,

@@ -139,8 +139,26 @@ def is_source_file(path: Path) -> bool:
     return path.suffix.lower() in SOURCE_SUFFIXES
 
 
-# Directory names that mean "the tests live here".
-TEST_DIRECTORIES = frozenset({"tests", "test", "spec", "specs", "__tests__", "e2e"})
+# Directory names that mean "the tests live here" — including the places test
+# *support* files live. Fixtures, mocks and testdata joined the list when the
+# security scanner reported the fake certificates under a fixtures/ directory
+# as committed credentials: everything under these directories is non-production
+# by definition, whatever its extension.
+TEST_DIRECTORIES = frozenset(
+    {
+        "tests",
+        "test",
+        "spec",
+        "specs",
+        "__tests__",
+        "e2e",
+        "fixtures",
+        "fixture",
+        "__mocks__",
+        "mocks",
+        "testdata",
+    }
+)
 
 # Filename shapes that mean "this file is a test", across the ecosystems the
 # framework detector recognises.
@@ -262,6 +280,28 @@ def read_text(path: Path, *, max_bytes: int = MAX_READ_BYTES) -> str:
     except OSError:
         return ""
     return raw.decode("utf-8", errors="replace")
+
+
+# A whole-line comment, across the comment syntaxes of the source languages the
+# index recognises. Used by `code_only`.
+_COMMENT_LINE = re.compile(r"^\s*(?:#|//|/\*|\*(?!/)|--)")
+
+
+def code_only(content: str) -> str:
+    """Drop whole-line comments, preserving line structure for the rest.
+
+    For checks whose evidence must come from code rather than commentary about
+    code. A comment explaining why pooling was disabled is not pooling being
+    disabled, and prose naming a secret pattern is not a secret. The scalability
+    scanner learned this by reporting its own regex definitions during the
+    self-scan; shared here so the security scanner does not relearn it.
+
+    Line-based on purpose: trailing comments are kept, because stripping them
+    would need per-language string-literal parsing to avoid mangling a `#`
+    inside a value — and a false *negative* from a trailing comment is cheaper
+    than corrupted evidence.
+    """
+    return "\n".join(line for line in content.splitlines() if not _COMMENT_LINE.match(line))
 
 
 # How much file content the index will hold on to. Beyond this, reads still

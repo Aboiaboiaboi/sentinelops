@@ -25,15 +25,15 @@ Here is SentinelOps scanning **itself**, which is the real output of the
 commands below rather than an illustration:
 
 ```
-sentinelops                                        67 / 100    Grade D
-5 of 6 categories reported
+sentinelops                                        92 / 100    Grade A
+6 of 6 categories reported
 
+  Security         25 / 25   ████████████████████
   Architecture     20 / 20   ████████████████████
   Reliability      20 / 20   ████████████████████
   Scalability      10 / 10   ████████████████████
   Deployment       11 / 15   ██████████████░░░░░░
   Observability     6 / 10   ████████████░░░░░░░░
-  Security          not assessed
 ```
 
 Each finding tells you what it found and what to do:
@@ -146,21 +146,20 @@ Six categories, weighted to sum to 100:
 
 | Category | Weight | Status | What it looks at |
 |---|---:|:---:|---|
-| **Security** | 25 | ⬜ planned | secrets, dependency vulnerabilities |
+| **Security** | 25 | ✅ | committed credentials, hardcoded secrets, debug mode, TLS overrides |
 | **Reliability** | 20 | ✅ | health endpoint, request timeouts, retries, swallowed errors |
 | **Architecture** | 20 | ✅ | tests, dependency locking, file size, layout, documentation |
 | **Deployment** | 15 | ✅ | Dockerfile, image pinning, non-root user, healthcheck, CI |
 | **Observability** | 10 | ✅ | logging, structured output, metrics and error tracking |
 | **Scalability** | 10 | ✅ | in-memory state, local file storage, connection pooling |
 
-### Why scores look low right now
+All six scanners are live, so a spotless repository really can score 100. A
+category that fails to report **contributes nothing** — it isn't quietly
+excluded from the total, so a partial scan can't masquerade as a thorough one.
 
-A category that has no scanner yet **contributes nothing** — it isn't quietly
-excluded from the total. A scan that assessed a third of the rubric shouldn't
-look like a thorough one.
-
-Security is still unbuilt, so **the current maximum is 75 / 100**. That number
-goes up as scanners land, not because the checks got easier.
+The security category is a deliberately shallow baseline for now — checks that
+plain reading can do responsibly. Dedicated tools (Gitleaks, Trivy, Semgrep,
+OSV) replace and deepen it in a later phase, each running in its own sandbox.
 
 ### It tries hard not to cry wolf
 
@@ -175,6 +174,10 @@ A scanner that flags healthy code gets ignored, and then it catches nothing. So:
   advice anyone can act on.
 - **A library mentioned in a comment isn't a library you use.** Evidence means
   an import, a dependency, or an actual call.
+- **A filename alone never convicts.** A committed `.env` where every secret is
+  blank or `changethis` is a template; a `.pem` is flagged only if its own
+  header says *private* key, because a public certificate is supposed to be
+  committed; `${VAR}` in an `.npmrc` is interpolation done right, not a token.
 
 ---
 
@@ -232,7 +235,7 @@ never readable from JavaScript.
 ### Running the checks
 
 ```bash
-# Backend — 462 tests. Needs Postgres running.
+# Backend — 532 tests. Needs Postgres running.
 cd backend
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
@@ -355,8 +358,7 @@ endpoints are rate limited.
 ## Roadmap
 
 - [x] **Foundation** — auth, database, API, Docker
-- [ ] **Scanning engine** — 5 of 6 scanners built; baseline security and
-      private repositories remain
+- [ ] **Scanning engine** — all 6 scanners built; private repositories remain
 - [ ] **Security tooling** — Gitleaks, Trivy, Semgrep, OSV, each in its own
       sandbox
 - [ ] **Reporting** — PDF export

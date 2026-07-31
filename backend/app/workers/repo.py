@@ -92,9 +92,23 @@ def _git_command(url: str, destination: Path, hooks_dir: Path) -> list[str]:
     ]
 
 
+# Variables the operating system itself needs in any child process, passed
+# through when present. On Windows a process without SystemRoot cannot
+# initialise winsock, so every DNS lookup dies with "getaddrinfo() thread
+# failed to start" — found the first time a host-run worker cloned over HTTPS,
+# because the tests clone file:// URLs that never resolve a name, and the
+# Docker worker is Linux, where the minimal environment is enough.
+_OS_PASSTHROUGH_VARIABLES = ("SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "TEMP", "TMP")
+
+
 def _git_environment() -> dict[str, str]:
     """A minimal environment, so nothing on the host leaks into the clone."""
-    return {
+    environment = {
+        name: value
+        for name in _OS_PASSTHROUGH_VARIABLES
+        if (value := os.environ.get(name)) is not None
+    }
+    return environment | {
         "PATH": os.environ.get("PATH", ""),
         # Without this, an authenticating URL blocks on a credential prompt that
         # nobody will ever answer, and the job holds a worker slot until the
