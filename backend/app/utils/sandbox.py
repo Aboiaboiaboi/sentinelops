@@ -88,6 +88,16 @@ class SandboxSpec:
     # against no vulnerability database would report a clean repository.
     needs_cache: bool = False
 
+    # Fixed variables this tool needs, written out as literals by its own
+    # module. Nothing here is ever read from the worker's environment, and that
+    # distinction is the whole point: ("HOME", "/tmp") is a constant a developer
+    # typed, where os.environ["HOME"] would be the host leaking in.
+    #
+    # It exists because Semgrep writes a settings file at startup and, with no
+    # HOME set, resolves it to /.semgrep on the read-only root and dies. Keep
+    # this as short as the tool genuinely requires.
+    environment: tuple[tuple[str, str], ...] = ()
+
     def __post_init__(self) -> None:
         # An unpinned image means the tool can change under a scan without a
         # commit, which turns "the score dropped" into an unanswerable question.
@@ -322,9 +332,14 @@ class DockerSandbox:
                 f"type=volume,source={self._cache_volume},target={CACHE_MOUNT},readonly",
             ]
 
-        # No -e, --env or --env-file anywhere above, and none here. `docker run`
-        # passes nothing from this process by default; the rule is that it stays
-        # that way, and a test asserts it.
+        # The only environment the container gets, and every value is a literal
+        # from the tool's own module. `docker run` passes nothing from this
+        # process by default and there is no --env-file or bare -e NAME here —
+        # the latter matters, because `-e NAME` with no `=value` is precisely
+        # the form that copies a variable out of the caller's environment.
+        for name, value in spec.environment:
+            command += ["--env", f"{name}={value}"]
+
         command.append(spec.image)
         command += [argument.replace(REPO_PLACEHOLDER, container_repo) for argument in spec.command]
         return command

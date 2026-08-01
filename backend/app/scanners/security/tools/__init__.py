@@ -12,6 +12,7 @@ repository is clean when nothing looked at it.
 """
 
 from app.scanners.security.tools.gitleaks import scan_for_secrets
+from app.scanners.security.tools.semgrep import scan_code_patterns
 from app.scanners.security.tools.trivy import scan_dependencies
 
-__all__ = ["scan_dependencies", "scan_for_secrets"]
+__all__ = ["scan_code_patterns", "scan_dependencies", "scan_for_secrets"]

@@ -30,7 +30,7 @@ commands below rather than an illustration:
 ```
 sentinelops                                        90 / 100    Grade A
 6 of 6 categories reported
-29 checks: 21 passed · 4 skipped · 3 failed · 1 not yet implemented
+29 checks: 22 passed · 4 skipped · 3 failed
 
   Security         23 / 25   ██████████████████░░
   Architecture     20 / 20   ████████████████████
@@ -175,7 +175,7 @@ Six categories, weighted to sum to 100, and 29 individual checks:
 
 | Category | Weight | Checks | What it looks at |
 |---|---:|---:|---|
-| **Security** | 25 | 8 | committed credentials, leaked secrets (**Gitleaks**), vulnerable dependencies, dangerous code patterns, debug mode, TLS overrides, container secrets, `.gitignore` |
+| **Security** | 25 | 8 | committed credentials, leaked secrets (**Gitleaks**), vulnerable dependencies (**Trivy**), dangerous code patterns (**Semgrep**), debug mode, TLS overrides, container secrets, `.gitignore` |
 | **Reliability** | 20 | 4 | health endpoint, request timeouts, swallowed errors, retries |
 | **Architecture** | 20 | 5 | tests, dependency locking, file size, layout, documentation |
 | **Deployment** | 15 | 6 | deployment config, image pinning, non-root user, healthcheck, build context, CI |
@@ -201,10 +201,13 @@ records *that* a credential is exposed and never the credential itself.
 **Trivy** answers "does this project pin a version with a published
 vulnerability?" — against a database warmed into a read-only volume, because the
 sandbox has no network to fetch one. A repository with no lockfile it recognises
-is *skipped*, not passed: nothing was demonstrated. Semgrep follows for
-dangerous code patterns, and until it lands that check reports **not yet
-implemented** rather than passing, because a check nobody has written has not
-established anything.
+is *skipped*, not passed: nothing was demonstrated.
+
+**Semgrep** answers "is the shape of this code dangerous whatever values flow
+through it?" — a shell invoked with user input, a query built by string
+formatting. Only rules it rates as **errors** are reported: the full
+`p/security-audit` set includes a great deal of "consider whether" advice, and
+noise is how a scanner earns a reputation for crying wolf.
 
 The five regex checks that remain — credential files, debug mode, TLS overrides,
 container secrets, `.gitignore` — were kept rather than routed through a tool.
@@ -321,7 +324,7 @@ never readable from JavaScript.
 ### Running the checks
 
 ```bash
-# Backend — 908 tests. Needs Postgres running. The sandbox integration tests
+# Backend — 938 tests. Needs Postgres running. The sandbox integration tests
 # skip themselves when no Docker daemon is reachable.
 cd backend
 uv run pytest
@@ -520,10 +523,10 @@ endpoints are rate limited.
       fails, which checks passed rather than only what broke, scan-to-scan
       comparison, and editing that preserves history
 - [ ] **Security tooling** — real tools instead of regexes, each in its own
-      sandbox behind a `SandboxRunner` boundary. Gitleaks is in and answers the
-      leaked-secret check and Trivy the vulnerable-dependency one; Semgrep
-      (dangerous code patterns) is next, and its check reports *not yet
-      implemented* until it lands. OSV was dropped as a duplicate of Trivy
+      sandbox behind a `SandboxRunner` boundary. **Gitleaks, Trivy and Semgrep
+      are all in**; what remains is running the three concurrently, so the
+      category costs the slowest tool rather than the sum of them. OSV was
+      dropped as a duplicate of Trivy
 - [ ] **Reporting** — PDF export
 - [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
       Cloud Run

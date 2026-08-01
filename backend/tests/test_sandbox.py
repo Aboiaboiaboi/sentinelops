@@ -163,6 +163,43 @@ def test_no_environment_is_forwarded_to_the_container(run: RecordingRun, tmp_pat
     assert not any(argument.startswith("--env") for argument in run.command)
 
 
+def test_a_tool_may_declare_fixed_variables(run: RecordingRun, tmp_path: Path) -> None:
+    """Semgrep writes a settings file at startup and dies on the read-only root
+    without HOME. A literal a developer typed is not the host leaking in."""
+    DockerSandbox().run(
+        SandboxSpec(
+            image="semgrep/semgrep:1.0",
+            command=(),
+            timeout_seconds=1,
+            environment=(("HOME", "/tmp"),),
+        ),
+        repo_path=tmp_path,
+    )
+
+    assert "--env" in run.command
+    assert run.command[run.command.index("--env") + 1] == "HOME=/tmp"
+
+
+def test_a_declared_variable_always_carries_its_value(run: RecordingRun, tmp_path: Path) -> None:
+    """`-e NAME` without `=value` is the form that copies a variable out of the
+    caller's environment — exactly what this boundary exists to prevent."""
+    DockerSandbox().run(
+        SandboxSpec(
+            image="semgrep/semgrep:1.0",
+            command=(),
+            timeout_seconds=1,
+            environment=(("HOME", "/tmp"), ("SEMGREP_SETTINGS_FILE", "/tmp/s.yml")),
+        ),
+        repo_path=tmp_path,
+    )
+
+    declared = [
+        value for flag, value in zip(run.command, run.command[1:], strict=False) if flag == "--env"
+    ]
+    assert declared == ["HOME=/tmp", "SEMGREP_SETTINGS_FILE=/tmp/s.yml"]
+    assert all("=" in entry for entry in declared)
+
+
 def test_the_docker_client_gets_a_built_environment_not_the_worker_s(
     run: RecordingRun, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -182,16 +182,19 @@ class TestHardcodedSecrets:
         assert secrets.finding is None
 
 
-class TestChecksAwaitingTheirTool:
-    """Declared and budgeted, still waiting for Semgrep.
+class TestToolBackedChecks:
+    """All three now have a tool. With no sandbox — which is every test in this
+    file — each reports ERRORED rather than passing, because nothing looked."""
 
-    It reports ERRORED meanwhile — not skipped, which would tell somebody the
-    question does not apply to their code, and not passed, which would be a
-    claim nobody made.
-    """
-
-    @pytest.mark.parametrize("check_id", ["security.code_patterns"])
-    def test_reports_errored_until_implemented(self, tmp_path: Path, check_id: str) -> None:
+    @pytest.mark.parametrize(
+        "check_id",
+        [
+            "security.hardcoded_secrets",
+            "security.dependency_vulnerabilities",
+            "security.code_patterns",
+        ],
+    )
+    def test_reports_errored_without_a_sandbox(self, tmp_path: Path, check_id: str) -> None:
         _write(tmp_path, "app.py", "x = 1\n")
         results = SCANNER.scan(RepositoryIndex.build(tmp_path, framework="FastAPI"))
 
@@ -199,6 +202,7 @@ class TestChecksAwaitingTheirTool:
 
         assert result.outcome is CheckOutcome.ERRORED
         assert result.finding is None
+        assert result.reason
 
 
 class TestDebugMode:

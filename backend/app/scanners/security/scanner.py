@@ -28,13 +28,12 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     code_only,
-    errored,
     failed,
     is_test_file,
     passed,
     skipped,
 )
-from app.scanners.security.tools import gitleaks, trivy
+from app.scanners.security.tools import gitleaks, semgrep, trivy
 
 CATEGORY = "security"
 
@@ -51,11 +50,6 @@ _GITIGNORE = CheckSpec("security.gitignore", "Env files protected by .gitignore"
 # and documentation is not passing them — they never ran.
 _NO_SOURCE = "the repository has no hand-written source files"
 
-# Declared, budgeted, and still waiting for Semgrep. It reports ERRORED until
-# then, which says "this was not established" — the one honest answer available,
-# and the reason that outcome was built before any tool.
-_NOT_YET_IMPLEMENTED = "this check is not implemented yet"
-
 # Impacts, summing to the category weight of 25. Re-cut when the tools arrived:
 # four new points had to come from somewhere, and they came from the checks a
 # real tool now answers better. SCORING_VERSION went to v2 in the same commit,
@@ -63,7 +57,7 @@ _NOT_YET_IMPLEMENTED = "this check is not implemented yet"
 _CREDENTIAL_FILE = 4
 _HARDCODED_SECRET = gitleaks.BUDGET  # 5
 _VULNERABLE_DEPENDENCY = trivy.BUDGET  # 5
-_DANGEROUS_CODE_PATTERN = 4
+_DANGEROUS_CODE_PATTERN = semgrep.BUDGET  # 4
 _DEBUG_ENABLED = 2
 _TLS_DISABLED = 2
 _SECRET_IN_CONTAINER_CONFIG = 2
@@ -310,7 +304,7 @@ class SecurityScanner:
             # it is why scanners are dispatched off the event loop.
             gitleaks.scan_for_secrets(_HARDCODED, repo),
             trivy.scan_dependencies(_DEPENDENCIES, repo),
-            errored(_CODE_PATTERNS, _NOT_YET_IMPLEMENTED),
+            semgrep.scan_code_patterns(_CODE_PATTERNS, repo),
             self._check_debug(has_source, debug_files),
             self._check_tls(has_source, tls_files),
             self._check_container_config(container_configs, container_files),
