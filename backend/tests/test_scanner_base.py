@@ -10,16 +10,21 @@ from pathlib import Path
 import pytest
 
 from app.scanners.base import (
+    CONCLUSIVE_OUTCOMES,
     MAX_READ_BYTES,
+    CheckOutcome,
     CheckResult,
     CheckSpec,
     RepositoryIndex,
     ScanFinding,
     Scanner,
     Severity,
+    errored,
+    findings_of,
     iter_files,
     passed,
     read_text,
+    skipped,
 )
 
 
@@ -126,6 +131,43 @@ class TestScanFinding:
     def test_severity_values_are_uppercase(self) -> None:
         """The client uses these strings directly as style lookup keys."""
         assert [s.value for s in Severity] == ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+
+class TestErroredOutcome:
+    """A check our own tooling could not complete.
+
+    The distinction being defended: `skipped` says the question did not apply to
+    the repository, which is a statement *about the repository*. When a sandbox
+    times out or a tool crashes, nothing about the repository has been
+    established — and saying otherwise moves our failure onto the user.
+    """
+
+    CHECK = CheckSpec("security.example", "Example")
+
+    def test_carries_the_reason(self) -> None:
+        result = errored(self.CHECK, "the sandbox timed out")
+
+        assert result.outcome is CheckOutcome.ERRORED
+        assert result.reason == "the sandbox timed out"
+
+    def test_carries_no_finding(self) -> None:
+        """A check that did not finish has not established that anything is
+        wrong, so it must not deduct."""
+        result = errored(self.CHECK, "no sandbox available")
+
+        assert result.finding is None
+        assert findings_of([result]) == []
+
+    def test_is_not_skipped(self) -> None:
+        assert errored(self.CHECK, "x").outcome is not skipped(self.CHECK, "x").outcome
+
+    def test_reaches_no_verdict(self) -> None:
+        """Which is what the worker uses to decide a category assessed nothing.
+        Errored and skipped agree here for different reasons; passed and failed
+        are the only outcomes that concluded anything."""
+        assert CONCLUSIVE_OUTCOMES == {CheckOutcome.PASSED, CheckOutcome.FAILED}
+        assert errored(self.CHECK, "x").outcome not in CONCLUSIVE_OUTCOMES
+        assert skipped(self.CHECK, "x").outcome not in CONCLUSIVE_OUTCOMES
 
 
 class TestScannerProtocol:

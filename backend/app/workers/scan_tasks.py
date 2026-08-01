@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import SessionLocal
 from app.models import SCAN_CATEGORIES, CategoryStatus, ScanErrorCategory
 from app.scanners import registry
-from app.scanners.base import CheckOutcome, RepositoryIndex, ScanFinding, findings_of
+from app.scanners.base import CONCLUSIVE_OUTCOMES, RepositoryIndex, ScanFinding, findings_of
 from app.scanners.framework import detect_framework
 from app.services import github_service, project_service, scan_service, scoring_service
 from app.services.github_app_service import (
@@ -426,21 +426,24 @@ async def _run_scanners(
             for result in results
         )
 
-        # A category where every check was skipped assessed nothing, and must
+        # A category where no check reached a verdict assessed nothing, and must
         # not be paid as though it had. Scalability on a library is the plain
         # case: all three checks ask what a second instance would do, none of
         # them apply, and it was collecting the full 10 for work nobody did.
+        # A category whose tools all failed to run is the same situation
+        # arriving by a different route.
         #
         # This is the same rule already applied to a category with no scanner
         # and to a repository with no source — silence is not excellence — and
-        # it only bites when *nothing* ran. One passing check is enough to have
-        # earned the category, because something really was verified.
+        # it only bites when *nothing* concluded. One passing check is enough to
+        # have earned the category, because something really was verified.
         #
         # Check results are still stored above, so "what was checked" can say
-        # which questions did not apply rather than leaving a bare zero.
-        if results and all(result.outcome is CheckOutcome.SKIPPED for result in results):
+        # which questions did not apply, or which could not be answered, rather
+        # than leaving a bare zero.
+        if results and not any(result.outcome in CONCLUSIVE_OUTCOMES for result in results):
             logger.info(
-                "category not applicable, nothing assessed",
+                "category reached no verdict, nothing assessed",
                 extra={"scan_id": str(scan_id), "category": category},
             )
             await record(category, CategoryStatus.FAILED)

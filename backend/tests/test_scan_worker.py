@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import SCAN_CATEGORIES, Finding, Project, Scan, ScanStatus, User
 from app.scanners import registry
+from app.scanners.base import CheckResult, CheckSpec, RepositoryIndex, errored
 from app.services import scan_service
 from app.utils.queue import InMemoryQueue
 from app.workers.scan_tasks import execute_scan
@@ -346,6 +347,54 @@ class TestExecuteScan:
         assert finished.category_status["architecture"] == "failed"
         assert finished.score == 0
 
+    async def test_a_category_whose_checks_all_errored_assesses_nothing(
+        self,
+        session: AsyncSession,
+        scan_of: tuple[Scan, Project],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The same rule as all-skipped, arriving by a different route.
+
+        A scanner whose tools could not run has verified nothing, so paying it
+        full marks would price our own outage as the repository's excellence —
+        which is the mistake that scored an empty repository 77.
+        """
+        scan, _ = scan_of
+
+        monkeypatch.setattr(
+            "app.scanners.registry.SCANNERS",
+            {"architecture": _ErroringScanner()},
+        )
+
+        await execute_scan(session, scan_id=scan.id)
+
+        finished = await reload_scan(session, scan.id)
+        assert finished.status is ScanStatus.COMPLETED
+        assert finished.category_status["architecture"] == "failed"
+        assert "architecture" not in finished.category_scores
+        assert finished.score == 0
+
+    async def test_an_errored_check_is_still_recorded(
+        self,
+        session: AsyncSession,
+        scan_of: tuple[Scan, Project],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The category is forfeit, but "we could not answer this" is exactly
+        the thing a bare zero cannot say."""
+        scan, _ = scan_of
+
+        monkeypatch.setattr(
+            "app.scanners.registry.SCANNERS",
+            {"architecture": _ErroringScanner()},
+        )
+
+        await execute_scan(session, scan_id=scan.id)
+
+        recorded = (await reload_scan(session, scan.id)).check_results
+        assert [entry["outcome"] for entry in recorded] == ["errored"]
+        assert recorded[0]["reason"] == "the sandbox was unavailable"
+
     async def test_a_second_delivery_is_a_no_op(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
     ) -> None:
@@ -370,3 +419,18 @@ class _CrashingScanner:
 
     def scan(self, repo_path: Path) -> list:
         raise RuntimeError("scanner exploded")
+
+
+class _ErroringScanner:
+    """Reports honestly that it could not run, rather than raising.
+
+    The difference from _CrashingScanner matters: this one survives, records
+    what it could not answer, and lets the rest of the scan proceed — which is
+    how a sandboxed tool is meant to fail.
+    """
+
+    category = "architecture"
+    CHECKS = (CheckSpec("architecture.example", "Example"),)
+
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
+        return [errored(self.CHECKS[0], "the sandbox was unavailable")]

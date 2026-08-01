@@ -65,11 +65,24 @@ class CheckOutcome(enum.StrEnum):
     a scanner returned findings only, so "this service has a health endpoint"
     and "this is a CLI tool, the question does not apply" were both an empty
     list — the difference destroyed at the moment it was known.
+
+    `errored` is the same argument one level further. A check backed by a tool
+    that timed out, crashed, or had no sandbox to run in has not established
+    anything — but it is *our* failure, not a property of the repository.
+    Recording it as `skipped` would tell somebody the question did not apply to
+    their code, which is untrue; recording it as `passed` would be worse.
     """
 
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    ERRORED = "errored"
+
+
+#: Outcomes that mean the check actually reached a verdict about the repository.
+#: `skipped` and `errored` are both "no verdict", for different reasons, and the
+#: worker uses this to decide whether a category assessed anything at all.
+CONCLUSIVE_OUTCOMES = frozenset({CheckOutcome.PASSED, CheckOutcome.FAILED})
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +109,8 @@ class CheckResult:
     id: str
     title: str
     outcome: CheckOutcome
-    #: Why it did not apply. Only ever set for SKIPPED.
+    #: Why there is no verdict — that it did not apply (SKIPPED), or that it
+    #: could not be completed (ERRORED). Never set for PASSED or FAILED.
     reason: str | None = None
     #: The problem found. Only ever set for FAILED.
     finding: ScanFinding | None = None
@@ -117,6 +131,16 @@ def skipped(check: CheckSpec, reason: str) -> CheckResult:
 
 def failed(check: CheckSpec, finding: ScanFinding) -> CheckResult:
     return CheckResult(id=check.id, title=check.title, outcome=CheckOutcome.FAILED, finding=finding)
+
+
+def errored(check: CheckSpec, reason: str) -> CheckResult:
+    """The check could not be completed, with the reason a user can read.
+
+    Never carries a finding: a check that did not finish has not established
+    that anything is wrong, and deducting points for our own failure would
+    charge the repository for our outage.
+    """
+    return CheckResult(id=check.id, title=check.title, outcome=CheckOutcome.ERRORED, reason=reason)
 
 
 def findings_of(results: Iterable[CheckResult]) -> list[ScanFinding]:

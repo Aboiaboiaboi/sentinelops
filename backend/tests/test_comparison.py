@@ -180,6 +180,23 @@ class TestCheckChanges:
 
         assert compare(previous, current).checks == []
 
+    def test_a_check_that_stopped_failing_without_passing_is_not_a_fix(self) -> None:
+        """Only a move to `passed` is a fix.
+
+        Two ways to stop failing without improving anything: delete the
+        Dockerfile and every deployment check skips, or have our own tool break
+        and the check errors. Congratulating either would be a comparison that
+        lies in the direction people want to believe.
+        """
+        for outcome in ("skipped", "errored"):
+            previous = _scan(check_results=[_check("security.a", "failed")])
+            current = _scan(check_results=[_check("security.a", outcome)])
+
+            change = compare(previous, current).checks[0]
+
+            assert not change.is_improvement, outcome
+            assert not change.is_regression, outcome
+
     def test_a_move_between_passed_and_skipped_is_neither(self) -> None:
         """Reported, because it explains why a category's score moved — but not
         counted as a regression or a fix."""

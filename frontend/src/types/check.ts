@@ -5,8 +5,12 @@
  * reported findings only could not tell them apart — "this service has a health
  * endpoint" and "this is a CLI tool, the question does not apply" both looked
  * like silence.
+ *
+ * `errored` is ours, not the repository's: a tool that timed out or could not
+ * be started established nothing, and saying "did not apply" would blame the
+ * user's code for our failure.
  */
-export type CheckOutcome = 'passed' | 'failed' | 'skipped';
+export type CheckOutcome = 'passed' | 'failed' | 'skipped' | 'errored';
 
 /** One check a scan performed. Shape of GET /scans/{id}/checks. */
 export interface CheckResult {
@@ -14,7 +18,7 @@ export interface CheckResult {
   category: string;
   title: string;
   outcome: CheckOutcome;
-  /** Why it did not apply. Present only for a skipped check. */
+  /** Why there is no verdict. Present for a skipped or errored check. */
   reason: string | null;
 }
 

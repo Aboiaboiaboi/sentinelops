@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, ChevronDown, Minus, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Minus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { categoryLabel } from '@/lib/categories';
@@ -11,12 +11,16 @@ const OUTCOME_ICON = {
   passed: Check,
   failed: X,
   skipped: Minus,
+  errored: AlertTriangle,
 } as const;
 
 const OUTCOME_CLASS: Record<CheckOutcome, string> = {
   passed: 'text-scan-completed',
   failed: 'text-severity-high',
   skipped: 'text-muted-foreground',
+  // Amber rather than grey: an errored check is not a quiet non-event. It is a
+  // question this scan failed to answer, and the reader should notice.
+  errored: 'text-severity-medium',
 };
 
 /** Grouped by category, in the order the API returned them. */
@@ -31,12 +35,14 @@ function groupByCategory(checks: CheckResult[]): [string, CheckResult[]][] {
 }
 
 function summarise(checks: CheckResult[]): string {
-  const passed = checks.filter((c) => c.outcome === 'passed').length;
-  const failed = checks.filter((c) => c.outcome === 'failed').length;
-  const skipped = checks.filter((c) => c.outcome === 'skipped').length;
-  const parts = [`${passed} passed`];
-  if (failed) parts.push(`${failed} failed`);
-  if (skipped) parts.push(`${skipped} skipped`);
+  const count = (outcome: CheckOutcome) => checks.filter((c) => c.outcome === outcome).length;
+  const parts = [`${count('passed')} passed`];
+  // Only states actually present are named, so a healthy category reads
+  // "5 passed" rather than trailing two zeroes nobody needs.
+  for (const outcome of ['failed', 'skipped', 'errored'] as const) {
+    const total = count(outcome);
+    if (total) parts.push(`${total} ${outcome}`);
+  }
   return parts.join(' · ');
 }
 

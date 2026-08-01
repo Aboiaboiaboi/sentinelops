@@ -50,7 +50,15 @@ class CheckChange:
 
     @property
     def is_improvement(self) -> bool:
-        return self.previous_outcome == "failed" and self.current_outcome != "failed"
+        """Only a move to `passed` is a fix.
+
+        Deliberately not "stopped failing". A check that went from failed to
+        skipped stopped applying — deleting the Dockerfile silences every
+        deployment check without improving anything — and one that went to
+        errored means our own tool broke. Both would have been congratulated
+        here, which is how a comparison starts lying.
+        """
+        return self.previous_outcome == "failed" and self.current_outcome == "passed"
 
 
 @dataclass(frozen=True)
