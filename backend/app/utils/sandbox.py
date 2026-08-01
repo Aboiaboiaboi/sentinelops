@@ -384,9 +384,18 @@ class DockerSandbox:
         """
         if self._probe(["version", "--format", "{{.Server.Version}}"]) != 0:
             return "the Docker daemon is not reachable"
-        if self._volume and self._probe(["volume", "inspect", self._volume]) != 0:
+        if self._volume and not self.volume_exists(self._volume):
             return f"volume {self._volume!r} does not exist on the host daemon"
         return None
+
+    def volume_exists(self, name: str) -> bool:
+        """Whether the host daemon knows this volume.
+
+        Separate from verify() because a missing *cache* volume is not fatal the
+        way a missing clone volume is: Gitleaks needs no cache and should still
+        run. The caller decides how loudly to complain.
+        """
+        return self._probe(["volume", "inspect", name]) == 0
 
     def _probe(self, arguments: list[str]) -> int:
         try:

@@ -48,6 +48,16 @@ async def on_startup(ctx: dict[str, Any]) -> None:
         logger.error("sandbox unusable, tool checks will report errored", extra={"reason": reason})
         return
 
+    # A missing cache is a warning, not a refusal. Gitleaks needs no cache and
+    # runs regardless; only the Trivy and Semgrep checks report errored, which
+    # is the honest answer while the warm services are still downloading.
+    cache = settings.sandbox_cache_volume
+    if cache and not await asyncio.to_thread(sandbox.volume_exists, cache):
+        logger.warning(
+            "sandbox cache volume is missing; tools that need it will report errored",
+            extra={"volume": cache, "fix": "docker compose up warm-trivy warm-semgrep"},
+        )
+
     set_sandbox(sandbox)
     logger.info("sandbox ready", extra={"volume": settings.sandbox_volume or "(bind mount)"})
 

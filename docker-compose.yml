@@ -108,6 +108,56 @@ services:
         # serving requests against a schema it does not match.
         condition: service_completed_successfully
 
+  # The security tools run with --network=none, so they cannot download the data
+  # they need: Trivy's vulnerability database and Semgrep's rules. These two
+  # short-lived services do have network, write into a shared volume, and exit.
+  # The scan containers then mount that volume READ-ONLY.
+  #
+  # Deliberately NOT a dependency of the worker. A machine with no internet
+  # would otherwise have no worker at all, when what it actually has is two
+  # checks that cannot run — which the ERRORED outcome exists to say. Phase 5
+  # moves this to a scheduled CI job for the same reason.
+  #
+  # Both run as root and finish by widening permissions, because the scan
+  # containers read this volume as uid 65534 and a fresh named volume is
+  # root-owned 0755 — an unreadable cache looks exactly like a missing one.
+  warm-trivy:
+    image: aquasec/trivy:0.72.0
+    container_name: sentinelops-warm-trivy
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        trivy image --download-db-only --no-progress --cache-dir /cache &&
+        chmod -R a+rX /cache
+    volumes:
+      - sandbox_cache:/cache
+
+  warm-semgrep:
+    image: semgrep/semgrep:1.171.0
+    container_name: sentinelops-warm-semgrep
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    # Downloaded to a temporary name, validated, and only then moved into place.
+    # The move is atomic within the volume, so a scan starting mid-refresh reads
+    # either the old ruleset or the new one — never half a YAML file. Semgrep
+    # caches nothing itself: it re-fetches p/security-audit from the registry on
+    # every run, which is exactly what an offline container cannot do.
+    command:
+      # The `touch /src/.keep` is not incidental. The image ships an empty /src
+      # and aborts if it holds no files at all — its normal use is
+      # `-v "$PWD:/src"` — and validation takes no target to satisfy that with.
+      - >
+        mkdir -p /cache/semgrep /src && touch /src/.keep &&
+        curl -sSfL -o /cache/semgrep/.security-audit.yml.tmp
+        https://semgrep.dev/c/p/security-audit &&
+        semgrep scan --validate --config /cache/semgrep/.security-audit.yml.tmp
+        --metrics=off --disable-version-check &&
+        mv /cache/semgrep/.security-audit.yml.tmp /cache/semgrep/security-audit.yml &&
+        chmod -R a+rX /cache/semgrep
+    volumes:
+      - sandbox_cache:/cache
+
   worker:
     build:
       context: ./backend
@@ -150,6 +200,10 @@ services:
       # pins the name explicitly so this string is correct no matter what the
       # checkout directory is called.
       SANDBOX_VOLUME: sentinelops_worker_data
+      # Same rule about the real name as above. Populated by the two warm
+      # services; the worker logs a warning at startup if it is missing, since
+      # the tools that need it will report errored until it exists.
+      SANDBOX_CACHE_VOLUME: sentinelops_sandbox_cache
     # No ports. The worker pulls jobs off Redis rather than accepting requests,
     # so it needs no inbound path at all — which is also why Cloud Run Worker
     # Pools exist rather than forcing this shape into a request/response service.
@@ -171,3 +225,8 @@ volumes:
   # SANDBOX_VOLUME above would silently point at nothing.
   worker_data:
     name: sentinelops_worker_data
+  # Trivy's vulnerability database and Semgrep's rules. Around 1.1 GB once
+  # unpacked, and rebuilt by the warm services rather than backed up — it is a
+  # cache, and `docker compose down -v` is meant to be safe to run.
+  sandbox_cache:
+    name: sentinelops_sandbox_cache

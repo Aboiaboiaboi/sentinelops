@@ -346,6 +346,30 @@ def test_verify_reports_a_missing_volume(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "nope" in reason
 
 
+def test_a_missing_cache_volume_is_not_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gitleaks needs no cache and must still run, so the caller decides how
+    loudly to complain rather than verify() refusing the whole sandbox."""
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        missing = command[1] == "volume"
+        return subprocess.CompletedProcess(command, returncode=1 if missing else 0, stdout="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    # The clone volume is what makes a sandbox usable at all; the cache only
+    # decides whether two of the tools can run.
+    sandbox = DockerSandbox()
+
+    assert sandbox.verify() is None
+    assert sandbox.volume_exists("sentinelops_sandbox_cache") is False
+
+
+def test_an_existing_volume_is_reported_as_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", RecordingRun(returncode=0))
+
+    assert DockerSandbox().volume_exists("sentinelops_sandbox_cache") is True
+
+
 def test_verify_passes_when_the_daemon_and_volume_are_there(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,6 +410,96 @@ def test_the_implementation_can_be_swapped() -> None:
 @pytest.mark.parametrize("implementation", [NullSandbox(), DockerSandbox()])
 def test_both_implementations_satisfy_the_protocol(implementation: object) -> None:
     assert isinstance(implementation, SandboxRunner)
+
+
+# ---------------------------------------------------------------------------
+# What the worker installs at startup
+# ---------------------------------------------------------------------------
+
+
+class FakeSandbox:
+    """A DockerSandbox that answers its probes without a daemon."""
+
+    def __init__(self, *, reason: str | None = None, has_cache: bool = True, **kwargs: Any) -> None:
+        del kwargs
+        self._reason = reason
+        self._has_cache = has_cache
+
+    def verify(self) -> str | None:
+        return self._reason
+
+    def volume_exists(self, name: str) -> bool:
+        del name
+        return self._has_cache
+
+    def run(self, spec: SandboxSpec, *, repo_path: Path) -> SandboxResult:
+        raise AssertionError("not called")
+
+
+@pytest.fixture
+def worker_startup(monkeypatch: pytest.MonkeyPatch):
+    """Runs the worker's on_startup with the global sandbox restored after."""
+    from app.workers import settings as worker_settings
+
+    original = get_sandbox()
+
+    async def run(*, enabled: bool = True, cache: str = "", **sandbox_kwargs: Any) -> None:
+        monkeypatch.setattr(worker_settings.settings, "sandbox_enabled", enabled)
+        monkeypatch.setattr(worker_settings.settings, "sandbox_volume", "vol")
+        monkeypatch.setattr(worker_settings.settings, "sandbox_cache_volume", cache)
+        monkeypatch.setattr(
+            worker_settings, "DockerSandbox", lambda **kwargs: FakeSandbox(**sandbox_kwargs)
+        )
+        await worker_settings.on_startup({})
+
+    try:
+        yield run
+    finally:
+        set_sandbox(original)
+
+
+async def test_a_disabled_sandbox_leaves_the_null_one_installed(worker_startup) -> None:
+    await worker_startup(enabled=False)
+
+    assert isinstance(get_sandbox(), NullSandbox)
+
+
+async def test_an_unusable_sandbox_is_not_installed(worker_startup) -> None:
+    """A worker that cannot isolate anything must not hold a runner that would
+    be asked to try. Errored checks are the correct outcome, not a crash."""
+    await worker_startup(reason="the Docker daemon is not reachable")
+
+    assert isinstance(get_sandbox(), NullSandbox)
+
+
+async def test_a_working_sandbox_replaces_the_null_one(worker_startup) -> None:
+    await worker_startup()
+
+    assert isinstance(get_sandbox(), FakeSandbox)
+
+
+async def test_a_missing_cache_warns_but_still_installs_the_sandbox(
+    worker_startup, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Gitleaks needs no cache. Refusing the whole sandbox over a missing
+    vulnerability database would take a working tool down with a missing one.
+
+    Asserted against stdout rather than caplog: on_startup reconfigures logging
+    as its first act, which replaces every root handler — including the one
+    caplog installs — so the JSON stream is the only place the line lands.
+    """
+    await worker_startup(cache="sentinelops_sandbox_cache", has_cache=False)
+
+    assert isinstance(get_sandbox(), FakeSandbox)
+    assert "cache volume is missing" in capsys.readouterr().out
+
+
+async def test_a_warmed_cache_says_nothing(
+    worker_startup, capsys: pytest.CaptureFixture[str]
+) -> None:
+    await worker_startup(cache="sentinelops_sandbox_cache", has_cache=True)
+
+    assert "cache volume is missing" not in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # by its real path. See DockerSandbox — getting this wrong makes every tool
     # scan an empty directory and report a clean repository.
     sandbox_volume: str = ""
+    # The named volume holding Trivy's vulnerability database and Semgrep's
+    # rules, mounted read-only into each scan container. The sandbox has no
+    # network, so a tool that needs data from the internet gets it from here or
+    # reports errored. Populated by the warm services in docker-compose.yml.
+    sandbox_cache_volume: str = ""
     sandbox_timeout_seconds: int = 300
     sandbox_memory_mb: int = 512
 

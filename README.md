@@ -81,6 +81,14 @@ The first run takes a few minutes while it downloads and builds. It starts five
 things: a database, a queue, a one-off database setup job, the API, and the
 background worker that does the scanning.
 
+Two more short-lived jobs run alongside them and then exit. They download the
+vulnerability database and rule set that the security tools need, into a cache
+volume — roughly 100 MB over the wire and about 1.1 GB on disk. The tools
+themselves run with no network at all, so this is the only moment that data can
+arrive. Nothing waits on it: the rest of the app is usable immediately, and
+until the cache is ready the checks that depend on it report *errored* rather
+than pretending your repository is clean.
+
 Check it's alive:
 
 ```bash
@@ -109,7 +117,7 @@ Try `https://github.com/pallets/click` if you want something to test with.
 
 ```bash
 docker compose down       # stop, keep your data
-docker compose down -v    # stop and delete the database too
+docker compose down -v    # stop and delete the database and caches too
 ```
 
 <details>
