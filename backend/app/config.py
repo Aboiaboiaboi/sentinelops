@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     clone_max_bytes: int = 500_000_000
     clone_max_files: int = 50_000
 
+    # Container isolation for the security tools. Off by default: with no
+    # sandbox the checks report themselves as errored, which is honest, where a
+    # default of "run them unisolated" would execute third-party binaries
+    # against a hostile repository on whatever machine happens to start the
+    # worker.
+    sandbox_enabled: bool = False
+    # The named volume holding clones, when the worker is itself a container.
+    # Empty means the worker runs on the host and the clone can be bind-mounted
+    # by its real path. See DockerSandbox — getting this wrong makes every tool
+    # scan an empty directory and report a clean repository.
+    sandbox_volume: str = ""
+    sandbox_timeout_seconds: int = 300
+    sandbox_memory_mb: int = 512
+
     # Only consulted when the browser talks to the API cross-origin. Local dev
     # goes through the frontend's /api proxy, which is same-origin, so CORS never
     # enters the picture there. A wildcard is not an option: the spec sends

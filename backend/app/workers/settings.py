@@ -5,26 +5,51 @@ task definitions so importing a task does not drag in worker configuration —
 the API imports task *names* as strings and never this module.
 """
 
+import asyncio
+import logging
 from typing import Any
 
 from arq.connections import RedisSettings
 
 from app.config import get_settings
 from app.logging import configure_logging
+from app.utils.sandbox import DockerSandbox, set_sandbox
 from app.workers.scan_tasks import run_scan
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:
-    """Reassert JSON logging.
+    """Reassert JSON logging, and install the sandbox.
 
-    Redundant when started through `app.workers.main`, which configures logging
-    before the worker exists. Kept because it is the only thing that helps if
-    someone runs the arq CLI directly, where arq's own dictConfig would
-    otherwise leave the output as plain text.
+    Logging is redundant when started through `app.workers.main`, which
+    configures it before the worker exists. Kept because it is the only thing
+    that helps if someone runs the arq CLI directly, where arq's own dictConfig
+    would otherwise leave the output as plain text.
+
+    The sandbox is installed here and nowhere else. The API never runs a tool —
+    it does not even have git — so a sandbox in the API process would be one
+    more thing able to reach the Docker socket for no reason.
     """
     configure_logging(settings.log_level)
+
+    if not settings.sandbox_enabled:
+        # Left as the NullSandbox, which raises rather than running anything. A
+        # check with no sandbox reports errored; it never passes.
+        return
+
+    sandbox = DockerSandbox(volume=settings.sandbox_volume)
+    # Checked once at startup rather than per scan. A misconfigured volume is
+    # otherwise discovered as a tool that mysteriously finds nothing, which is
+    # the single most expensive way for this to go wrong.
+    if (reason := await asyncio.to_thread(sandbox.verify)) is not None:
+        logger.error("sandbox unusable, tool checks will report errored", extra={"reason": reason})
+        return
+
+    set_sandbox(sandbox)
+    logger.info("sandbox ready", extra={"volume": settings.sandbox_volume or "(bind mount)"})
 
 
 class WorkerSettings:

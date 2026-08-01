@@ -116,10 +116,40 @@ services:
     restart: unless-stopped
     volumes:
       - worker_data:/data
+      # THE DOCKER SOCKET IS ROOT ON THE HOST. Anything that can reach it can
+      # start a privileged container and own this machine — the socket has no
+      # concept of "only allowed to run these images". It is here so the worker
+      # can start sibling containers for the security tools, and it belongs in
+      # this development file and NOWHERE ELSE. Do not copy this line into a
+      # deployed environment: Phase 5 replaces it with Cloud Run Jobs, which is
+      # the whole reason SandboxRunner is a protocol rather than a function.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The socket is mode 660 root:root, and the worker runs as an unprivileged
+    # user — so without this it gets EACCES and every tool check reports errored.
+    # Adding the app user to the root *group* is a real privilege increase, and
+    # it is honest to note that it changes little: anything that can reach this
+    # socket is already root-equivalent on the host. Development only, for the
+    # same reason as the mount above.
+    group_add:
+      - "0"
     environment:
       DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@postgres:5432/sentinelops
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+      SANDBOX_ENABLED: "true"
+      # The volume name, not a path. `docker run` from inside this container is
+      # served by the host daemon, so bind-mounting /data/repos/... would name a
+      # path the host does not have — the tool would scan nothing and report the
+      # repository clean. Mounting the same named volume gives the sibling the
+      # clone at the path it already has.
+      #
+      # The name the HOST daemon knows, which is not `worker_data`. Compose
+      # prefixes volume names with the project, and a `source=` naming a volume
+      # that does not exist is created empty rather than refused — so the tool
+      # would mount an empty directory instead of the clone. The volumes section
+      # pins the name explicitly so this string is correct no matter what the
+      # checkout directory is called.
+      SANDBOX_VOLUME: sentinelops_worker_data
     # No ports. The worker pulls jobs off Redis rather than accepting requests,
     # so it needs no inbound path at all — which is also why Cloud Run Worker
     # Pools exist rather than forcing this shape into a request/response service.
@@ -135,4 +165,9 @@ volumes:
   postgres_data:
   redis_data:
   backend_data:
+  # Named explicitly, unlike the others. Compose would otherwise call it
+  # <project>_worker_data, where the project defaults to the directory name —
+  # so a clone into `sentinelops-fork/` would change the volume's real name and
+  # SANDBOX_VOLUME above would silently point at nothing.
   worker_data:
+    name: sentinelops_worker_data

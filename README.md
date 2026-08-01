@@ -385,9 +385,12 @@ Three boundaries do real work:
   response schema references it, so it cannot leak.
 - **`scanners/` imports nothing from the app.** No database, no queue, no HTTP —
   which is why every scanner is testable against a directory in `tmp_path`.
-- **`utils/storage.py` and `utils/queue.py`** are the only files allowed to know
-  about a cloud SDK. There are currently **zero** cloud SDK dependencies, so the
-  containers run anywhere; swapping Redis for SQS is a change in one file.
+- **`utils/storage.py`, `utils/queue.py` and `utils/sandbox.py`** are the only
+  files allowed to know how work leaves the process — a bucket, a broker, or a
+  container runtime. There are currently **zero** cloud SDK dependencies, so the
+  containers run anywhere; swapping Redis for SQS, or Docker for Cloud Run Jobs,
+  is a change in one file. `sandbox.py` defaults to refusing: with no runtime
+  configured a tool check reports *errored*, never *passed*.
 
 ### Security
 

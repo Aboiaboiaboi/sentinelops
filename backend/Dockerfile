@@ -140,6 +140,16 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
+# The Docker *client* only — a single static binary copied from the official
+# image, the same trick used for uv in the builder. Not `apt-get install
+# docker.io`, which drags in the whole engine, containerd and a service manager
+# to run a daemon this container must never have.
+#
+# The client is useless on its own: it needs a socket to talk to, and nothing in
+# a deployed image grants one. docker-compose.yml mounts it for local
+# development and says why in the file.
+COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
+
 # Clones land under /data, which the runtime stage created for the app user.
 # /app is root-owned and not writable by the process — deliberately, so that
 # untrusted repository content can never be written next to application code.
