@@ -17,6 +17,11 @@ dependencies = [
     "pydantic[email]>=2.10",
     "slowapi>=0.1.9",
     "arq>=0.28",
+    # A runtime dependency, not just a test client: github_app_service calls the
+    # GitHub API with it. It lived in the dev group while it was only used by
+    # the test suite, and stayed there when it stopped being — which built a
+    # worker image (uv sync --no-dev) that crashed on import.
+    "httpx>=0.28",
 ]
 
 [dependency-groups]
@@ -24,7 +29,6 @@ dev = [
     "ruff>=0.9",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
-    "httpx>=0.28",
 ]
 
 # This is an application, not a distributable library — there is nothing to build
