@@ -14,13 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from app.scanners.base import RepositoryIndex, Severity, findings_of
+from app.scanners.base import CheckOutcome, RepositoryIndex, Severity, findings_of
 from app.scanners.security import SecurityScanner
 
 SCANNER = SecurityScanner()
-
-FAKE_AWS_KEY = "AKIA" + "Q" * 16
-FAKE_GITHUB_TOKEN = "ghp_" + "Ab1" * 12
 
 
 def _scan(repo: Path):
@@ -59,11 +56,9 @@ class TestHealthyRepository:
         assert {f.category for f in _scan(tmp_path)} == {"security"}
 
     def test_impacts_cannot_exceed_the_category_weight(self, tmp_path: Path) -> None:
-        _write(tmp_path, ".env", "X=1\n")
+        _write(tmp_path, ".env", "DB_PASSWORD=r3al-lo0king-value\n")
         _write(tmp_path, "requirements.txt", "python-dotenv\n")
-        _write(
-            tmp_path, "app.py", f'key = "{FAKE_AWS_KEY}"\nDEBUG = True\nr.get(u, verify=False)\n'
-        )
+        _write(tmp_path, "app.py", "DEBUG = True\nr.get(u, verify=False)\n")
         _write(tmp_path, "Dockerfile", "FROM python:3.14\nENV DB_PASSWORD=hunter2hunter2\n")
 
         assert sum(f.score_impact for f in _scan(tmp_path)) <= 25
@@ -168,71 +163,44 @@ class TestCredentialFiles:
 
 
 class TestHardcodedSecrets:
-    def test_flags_a_known_token_format(self, tmp_path: Path) -> None:
-        _write(tmp_path, "config.py", f'AWS_KEY = "{FAKE_AWS_KEY}"\n')
+    """Gitleaks answers this check now — see test_gitleaks.py for its
+    behaviour. What belongs here is that the scanner reports the check at all,
+    and reports it honestly when there is no sandbox to run the tool in, which
+    is the case for every test in this file."""
 
-        assert "Secrets are hardcoded in source" in _titles(tmp_path)
+    def test_it_is_errored_rather_than_passed_without_a_sandbox(self, tmp_path: Path) -> None:
+        """The regex implementation this replaced would have said "passed" —
+        which, with nothing having looked, was the one answer that could not be
+        justified."""
+        _write(tmp_path, "app.py", "x = 1\n")
+        results = SCANNER.scan(RepositoryIndex.build(tmp_path, framework="FastAPI"))
 
-    def test_flags_a_github_token(self, tmp_path: Path) -> None:
-        _write(tmp_path, "deploy.py", f'token = "{FAKE_GITHUB_TOKEN}"\n')
+        secrets = next(r for r in results if r.id == "security.hardcoded_secrets")
 
-        assert "Secrets are hardcoded in source" in _titles(tmp_path)
+        assert secrets.outcome is CheckOutcome.ERRORED
+        assert secrets.reason
+        assert secrets.finding is None
 
-    def test_flags_a_real_looking_password_assignment(self, tmp_path: Path) -> None:
-        _write(tmp_path, "settings.py", 'DB_PASSWORD = "prod-h8!kQz94x"\n')
 
-        assert "Secrets are hardcoded in source" in _titles(tmp_path)
+class TestChecksAwaitingTheirTool:
+    """Declared in this milestone, wired to Trivy and Semgrep in the next two.
+
+    They report ERRORED meanwhile — not skipped, which would tell somebody the
+    question does not apply to their code, and not passed, which would be a
+    claim nobody made.
+    """
 
     @pytest.mark.parametrize(
-        "value",
-        ["changeme", "your-key-here", "<insert-key>", "${API_KEY}", "example123", "xxxxxxxxxx"],
+        "check_id", ["security.dependency_vulnerabilities", "security.code_patterns"]
     )
-    def test_placeholders_are_not_secrets(self, tmp_path: Path, value: str) -> None:
-        _write(tmp_path, "settings.py", f'password = "{value}"\n')
+    def test_reports_errored_until_implemented(self, tmp_path: Path, check_id: str) -> None:
+        _write(tmp_path, "app.py", "x = 1\n")
+        results = SCANNER.scan(RepositoryIndex.build(tmp_path, framework="FastAPI"))
 
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
+        result = next(r for r in results if r.id == check_id)
 
-    def test_an_env_lookup_is_the_correct_pattern(self, tmp_path: Path) -> None:
-        _write(tmp_path, "settings.py", "password = os.environ['DB_PASSWORD']\n")
-
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
-
-    def test_a_short_value_is_not_reported(self, tmp_path: Path) -> None:
-        """Too short to be a credential, common as a test default."""
-        _write(tmp_path, "conf.py", 'password = "admin"\n')
-
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
-
-    def test_a_comment_naming_a_token_format_is_prose(self, tmp_path: Path) -> None:
-        _write(tmp_path, "docs.py", f"# rotate any {FAKE_AWS_KEY} style key immediately\nx = 1\n")
-
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
-
-    def test_a_test_file_secret_is_a_fixture(self, tmp_path: Path) -> None:
-        _write(tmp_path, "tests/test_auth.py", 'password = "prod-h8kQz94xLm"\n')
-
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
-
-    def test_a_fake_key_in_the_real_format_is_a_placeholder(self, tmp_path: Path) -> None:
-        """Insomnia ships 'AIzaSyD3m-F4KE-EXAMPL3...' as UI example text — the
-        correct token format with fake spelled into the middle. Even tier A
-        matches get the placeholder check."""
-        _write(tmp_path, "ui.tsx", "const hint = 'AIzaSyD3m-F4KE-EXAMPL3F4K3KEY1234567890';\n")
-
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
-
-    def test_a_regex_being_built_is_not_a_credential(self, tmp_path: Path) -> None:
-        """Postman-importer style: auth_token=")(.*?)(?=" is a pattern under
-        construction, and metacharacters do not appear in real tokens."""
-        _write(tmp_path, "importer.ts", "const re = 'auth_token=\")(.*?)(?=\"';\n")
-
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
-
-    @pytest.mark.parametrize("value", ["password", "x-oauth-basic", "123456789", "supersecret"])
-    def test_conventional_dummy_values_are_not_secrets(self, tmp_path: Path, value: str) -> None:
-        _write(tmp_path, "client.ts", f"const opts = {{ password: '{value}' }};\n")
-
-        assert "Secrets are hardcoded in source" not in _titles(tmp_path)
+        assert result.outcome is CheckOutcome.ERRORED
+        assert result.finding is None
 
 
 class TestDebugMode:
@@ -358,25 +326,24 @@ class TestGitignoreProtection:
 
 class TestFindingQuality:
     def test_findings_name_the_file(self, tmp_path: Path) -> None:
-        _write(tmp_path, "src/conf.py", f'key = "{FAKE_AWS_KEY}"\n')
-        finding = next(f for f in _scan(tmp_path) if f.title.startswith("Secrets are hardcoded"))
+        _write(tmp_path, "deploy/id_rsa", "-----BEGIN PRIVATE KEY-----\n")
+        finding = next(f for f in _scan(tmp_path) if f.title.startswith("Credential files"))
 
-        assert "src/conf.py" in finding.description
+        assert "deploy/id_rsa" in finding.description
 
     def test_one_finding_per_problem_not_per_file(self, tmp_path: Path) -> None:
-        for name in ("a.py", "b.py", "c.py"):
-            _write(tmp_path, name, f'key = "{FAKE_AWS_KEY}"\n')
+        for name in ("a/id_rsa", "b/id_rsa", "c/id_rsa"):
+            _write(tmp_path, name, "-----BEGIN PRIVATE KEY-----\n")
 
-        secrets = [f for f in _scan(tmp_path) if f.title.startswith("Secrets are hardcoded")]
+        credentials = [f for f in _scan(tmp_path) if f.title.startswith("Credential files")]
 
-        assert len(secrets) == 1
-        assert "2 other files" in secrets[0].description
+        assert len(credentials) == 1
+        assert "2 other files" in credentials[0].description
 
     def test_credential_findings_lead_with_rotation(self, tmp_path: Path) -> None:
         """Removing a leaked credential without rotating it fixes nothing; the
         advice must put rotation first."""
-        _write(tmp_path, ".env", "X=1\n")
-        _write(tmp_path, "conf.py", f'key = "{FAKE_AWS_KEY}"\n')
+        _write(tmp_path, ".env", "DB_PASSWORD=r3al-lo0king-value\n")
 
         for f in _scan(tmp_path):
             if f.severity is Severity.CRITICAL:

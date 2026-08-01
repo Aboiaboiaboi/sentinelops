@@ -27,7 +27,13 @@ from app.scanners.base import ScanFinding
 # Which version of the rubric produced a score. Stored on every scan so an old
 # score stays interpretable after the weights change — without it, comparing two
 # scans from either side of a change is meaningless.
-SCORING_VERSION = "v1"
+#
+# v2: security's 25 points were re-cut across eight checks when Gitleaks, Trivy
+# and Semgrep replaced part of the regex baseline. The category weights below
+# did not move; what a security finding costs did. Comparison correctly refuses
+# to show a delta across this boundary — the difference would measure a change
+# in SentinelOps, not in the repository.
+SCORING_VERSION = "v2"
 
 CATEGORY_WEIGHTS: Mapping[str, int] = {
     "security": 25,

@@ -6,6 +6,8 @@ outage. URL-scheme validation is deliberately not tested here — it lives in
 schemas/project.py where the URL enters the system, and is covered there.
 """
 
+import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -210,6 +212,32 @@ class TestClonedRepository:
 
         async with cloned_repository(source_repo.as_uri(), limits=LIMITS) as checkout:
             assert (checkout / "README.md").exists()
+
+    @pytest.mark.skipif(
+        not hasattr(os, "getuid"), reason="POSIX permission bits; the containers are Linux"
+    )
+    async def test_the_checkout_is_reachable_by_the_sandbox_user(
+        self, source_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """mkdtemp creates 0700, and the security tools run as uid 65534.
+
+        Found by scanning a real repository: Gitleaks could not stat the
+        checkout, exited non-zero with an empty report, and the result read as a
+        repository with no secrets in it. A directory nobody else can enter is
+        the right default for a temporary directory and the wrong one for a
+        checkout that is about to be handed to another user deliberately.
+        """
+        monkeypatch.setattr(
+            "app.workers.repo.get_settings", lambda: CloneSettings(tmp_path / "clones")
+        )
+
+        async with cloned_repository(source_repo.as_uri(), limits=LIMITS) as checkout:
+            mode = checkout.parent.stat().st_mode
+
+        # Execute for other: without it, no other user can traverse into the
+        # checkout at all, whatever the permissions inside it say.
+        assert mode & stat.S_IXOTH
+        assert mode & stat.S_IROTH
 
     async def test_removes_the_checkout_afterwards(
         self, source_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

@@ -33,8 +33,8 @@ from app.utils.sandbox import (
 )
 
 SPEC = SandboxSpec(
-    image="ghcr.io/gitleaks/gitleaks:v8.21.2",
-    command=("detect", "--source", REPO_PLACEHOLDER),
+    image="ghcr.io/gitleaks/gitleaks:v8.30.1",
+    command=("dir", REPO_PLACEHOLDER),
     timeout_seconds=60,
 )
 
@@ -219,19 +219,42 @@ def test_the_checkout_is_never_writable(run: RecordingRun, tmp_path: Path) -> No
 
 
 def test_the_cache_volume_is_mounted_read_only(run: RecordingRun, tmp_path: Path) -> None:
-    DockerSandbox().run(
-        SandboxSpec(
-            image="aquasec/trivy:0.58.1",
-            command=(),
-            timeout_seconds=1,
-            cache_volume="sentinelops_sandbox_cache",
-        ),
+    """The spec asks for the cache; the runner knows which volume that is. A
+    scanner naming a volume would be a scanner reading deployment config."""
+    DockerSandbox(cache_volume="sentinelops_sandbox_cache").run(
+        SandboxSpec(image="aquasec/trivy:0.72.0", command=(), timeout_seconds=1, needs_cache=True),
         repo_path=tmp_path,
     )
 
-    assert (
-        f"type=volume,source=sentinelops_sandbox_cache,target={CACHE_MOUNT},readonly"
-    ) in _mounts(run.command)
+    expected = f"type=volume,source=sentinelops_sandbox_cache,target={CACHE_MOUNT},readonly"
+    assert expected in _mounts(run.command)
+
+
+def test_a_tool_needing_an_unconfigured_cache_is_refused(run: RecordingRun, tmp_path: Path) -> None:
+    """Trivy with no vulnerability database finds no vulnerabilities, which is
+    indistinguishable from a repository that has none — the worst answer this
+    system could give. Refusing produces an errored check instead."""
+    with pytest.raises(SandboxUnavailable, match="cache"):
+        DockerSandbox().run(
+            SandboxSpec(
+                image="aquasec/trivy:0.72.0", command=(), timeout_seconds=1, needs_cache=True
+            ),
+            repo_path=tmp_path,
+        )
+
+    assert not run.calls, "nothing should have been started"
+
+
+def test_a_spec_may_not_exceed_the_operator_s_ceilings(run: RecordingRun, tmp_path: Path) -> None:
+    """A tool asks for what it needs; the operator decides what any one tool may
+    consume on this machine, and the smaller wins."""
+    DockerSandbox(max_memory_mb=256, max_timeout_seconds=30).run(
+        SandboxSpec(image="x/y:1", command=(), timeout_seconds=600, memory_mb=4096),
+        repo_path=tmp_path,
+    )
+
+    assert "--memory=256m" in run.command
+    assert run.calls[0][1]["timeout"] <= 30 + 10  # the spec's own grace period
 
 
 def test_no_cache_volume_means_no_cache_mount(run: RecordingRun, tmp_path: Path) -> None:

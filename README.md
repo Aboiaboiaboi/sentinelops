@@ -4,7 +4,7 @@
 
 **Is this application ready for production?**
 
-Point SentinelOps at a Git repository. It clones it, runs 27 checks across six
+Point SentinelOps at a Git repository. It clones it, runs 29 checks across six
 categories, and gives you a score out of 100 with specific findings — what's
 wrong, why it matters, and what to do about it. It also tells you which commit
 it looked at, what changed since the last scan, and what it *verified* rather
@@ -29,7 +29,8 @@ commands below rather than an illustration:
 
 ```
 sentinelops                                        92 / 100    Grade A
-6 of 6 categories reported     27 checks: 21 passed · 4 skipped · 2 failed
+6 of 6 categories reported
+29 checks: 21 passed · 4 skipped · 2 failed · 2 not yet implemented
 
   Security         25 / 25   ████████████████████
   Architecture     20 / 20   ████████████████████
@@ -153,11 +154,11 @@ scan progress. Set it back to `false` to use the real thing.
 
 ## What it checks
 
-Six categories, weighted to sum to 100, and 27 individual checks:
+Six categories, weighted to sum to 100, and 29 individual checks:
 
 | Category | Weight | Checks | What it looks at |
 |---|---:|---:|---|
-| **Security** | 25 | 6 | committed credentials, hardcoded secrets, debug mode, TLS overrides, container secrets, `.gitignore` |
+| **Security** | 25 | 8 | committed credentials, leaked secrets (**Gitleaks**), vulnerable dependencies, dangerous code patterns, debug mode, TLS overrides, container secrets, `.gitignore` |
 | **Reliability** | 20 | 4 | health endpoint, request timeouts, swallowed errors, retries |
 | **Architecture** | 20 | 5 | tests, dependency locking, file size, layout, documentation |
 | **Deployment** | 15 | 6 | deployment config, image pinning, non-root user, healthcheck, build context, CI |
@@ -175,9 +176,18 @@ behind a load balancer would do, none of them apply, and paying it the full 10
 would be marks for work nobody did. One passing check is enough to keep the
 category; the rule only bites when nothing ran at all.
 
-The security category is a deliberately shallow baseline for now — checks that
-plain reading can do responsibly. Dedicated tools (Gitleaks, Trivy, Semgrep,
-OSV) replace and deepen it in a later phase, each running in its own sandbox.
+The security category is part tooling, part reading. **Gitleaks** answers "is a
+credential committed here?" — it runs in a sandbox with no network, and secrets
+are redacted from its output before SentinelOps ever sees them, so the finding
+records *that* a credential is exposed and never the credential itself. Trivy
+and Semgrep follow, for vulnerable dependencies and dangerous code patterns;
+until they land, those two checks report **not yet implemented** rather than
+passing, because a check nobody has written has not established anything.
+
+The five regex checks that remain — credential files, debug mode, TLS overrides,
+container secrets, `.gitignore` — were kept rather than routed through a tool.
+They are dogfooded against real repositories, they cost nothing, and their
+measured false-positive rate is zero.
 
 ### It tries hard not to cry wolf
 
@@ -187,7 +197,13 @@ A scanner that flags healthy code gets ignored, and then it catches nothing. So:
   have one. Checks that only make sense for a web service are *skipped* for
   anything else — and a skip is reported as a skip, never quietly as a pass.
 - **Test files are judged differently from production code.** A test that
-  deliberately swallows an exception is fine.
+  deliberately swallows an exception is fine, and a format-valid fake key in a
+  fixture is a fixture. That one is measured, not assumed: run against a fresh
+  clone of SentinelOps, Gitleaks reports seven leaks and all seven are fixtures
+  in the security scanner's own tests. The cost is that a real credential
+  committed inside a test is not reported — a trade taken deliberately, because
+  a tool that flags a project's own fixtures gets muted, and a muted tool
+  catches nothing.
 - **Machine-generated code is excluded.** On some repositories that's 80%+ of
   the files, and "split this 4000-line generated client into modules" is not
   advice anyone can act on.
@@ -211,7 +227,7 @@ makes it checkable:
 | | What you get | Why it exists |
 |---|---|---|
 | **Commit context** | The sha, message, author and date of the commit that was scanned | Turns "the score dropped 6" into "the score dropped 6 *at this commit*" |
-| **What was checked** | All 27 checks with an outcome each — passed, failed, or skipped with a reason | A category at full marks can say *what it verified*, instead of merely having nothing to complain about |
+| **What was checked** | All 29 checks with an outcome each — passed, failed, skipped with a reason, or errored when a tool could not run | A category at full marks can say *what it verified*, instead of merely having nothing to complain about |
 | **Comparison** | Score and per-category movement against the previous scan, plus the exact checks that flipped | Regressions first, because what broke is what you need to see |
 | **Failure diagnostics** | A category, a plain-language detail, and a suggested fix when a scan fails | A scan that just says "failed" is a dead end |
 
@@ -277,12 +293,13 @@ never readable from JavaScript.
 ### Running the checks
 
 ```bash
-# Backend — 813 tests. Needs Postgres running.
+# Backend — 882 tests. Needs Postgres running. The sandbox integration tests
+# skip themselves when no Docker daemon is reachable.
 cd backend
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 
-# Frontend — 68 tests
+# Frontend — 71 tests
 cd frontend
 npm run typecheck && npm run lint && npm run test && npm run build
 ```
@@ -347,6 +364,13 @@ tree is walked once per scan, not once per scanner. The worker dispatches them
 off the event loop and pulls findings out with `findings_of()`, which is what
 keeps scoring identical to before check outcomes existed.
 
+A check backed by a tool lives in `scanners/security/tools/`, runs through
+`utils/sandbox.py`, and reports `errored` whenever the tool could not run —
+never `passed`. That distinction is not academic: an early version read
+Gitleaks' "I could not read this directory" exit code as its "no leaks found"
+exit code, and reported a repository full of credentials as clean. The tool now
+runs with `--exit-code 0`, so a non-zero exit means one thing only.
+
 Conventions: impacts sum to exactly the category weight; one finding per
 *problem* rather than per file; read `production_files`; guard service-only
 checks with `repo.is_service`; and return a result for **every** declared
@@ -364,7 +388,9 @@ Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
                        Redis queue ──► Worker ┘
                                           │
                                           ▼
-                  clone → index → 6 scanners → 27 checks → score
+                  clone → index → 6 scanners → 29 checks → score
+                                        │
+                                        └─ sandboxed tools (no network)
 ```
 
 The API only creates a scan record and queues a job — it never does the slow
@@ -391,8 +417,11 @@ Three boundaries do real work:
 
 - **`schemas/` is not `models/`.** The `User` table has a `password_hash`; no
   response schema references it, so it cannot leak.
-- **`scanners/` imports nothing from the app.** No database, no queue, no HTTP —
-  which is why every scanner is testable against a directory in `tmp_path`.
+- **`scanners/` imports nothing from the app** except the sandbox boundary. No
+  database, no queue, no HTTP, and no configuration — a tool declares *that* it
+  needs the warmed cache, and the runner knows which volume that is. Which is
+  why every scanner is testable against a directory in `tmp_path` and a fake
+  runner.
 - **`utils/storage.py`, `utils/queue.py` and `utils/sandbox.py`** are the only
   files allowed to know how work leaves the process — a bucket, a broker, or a
   container runtime. There are currently **zero** cloud SDK dependencies, so the
@@ -427,12 +456,15 @@ endpoints are rate limited.
 ## Roadmap
 
 - [x] **Foundation** — auth, database, API, Docker
-- [x] **Scanning engine** — all 6 scanners, 27 checks, plus private repositories
+- [x] **Scanning engine** — all 6 scanners, plus private repositories
 - [x] **Explainability** — commit context on each scan, real reasons when one
       fails, which checks passed rather than only what broke, scan-to-scan
       comparison, and editing that preserves history
-- [ ] **Security tooling** — Gitleaks, Trivy, Semgrep, OSV, each in its own
-      sandbox behind a `SandboxRunner` boundary
+- [ ] **Security tooling** — real tools instead of regexes, each in its own
+      sandbox behind a `SandboxRunner` boundary. Gitleaks is in and answers the
+      leaked-secret check; Trivy (vulnerable dependencies) and Semgrep
+      (dangerous code patterns) are next, and their checks report *not yet
+      implemented* until they land. OSV was dropped as a duplicate of Trivy
 - [ ] **Reporting** — PDF export
 - [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
       Cloud Run

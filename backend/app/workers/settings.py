@@ -40,7 +40,12 @@ async def on_startup(ctx: dict[str, Any]) -> None:
         # check with no sandbox reports errored; it never passes.
         return
 
-    sandbox = DockerSandbox(volume=settings.sandbox_volume)
+    sandbox = DockerSandbox(
+        volume=settings.sandbox_volume,
+        cache_volume=settings.sandbox_cache_volume,
+        max_timeout_seconds=settings.sandbox_timeout_seconds,
+        max_memory_mb=settings.sandbox_memory_mb,
+    )
     # Checked once at startup rather than per scan. A misconfigured volume is
     # otherwise discovered as a tool that mysteriously finds nothing, which is
     # the single most expensive way for this to go wrong.

@@ -361,6 +361,17 @@ async def cloned_repository(
     await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
 
     workspace = Path(await asyncio.to_thread(tempfile.mkdtemp, dir=root, prefix="scan-"))
+    # mkdtemp creates 0700 — correct for a temporary directory, and wrong here.
+    # The security tools run in a container as uid 65534, which cannot so much
+    # as stat a path inside a 0700 directory owned by someone else. Gitleaks
+    # failed exactly that way and reported an empty result, which read as a
+    # repository with no secrets in it.
+    #
+    # 0755 on the workspace only. The clone underneath keeps whatever git wrote,
+    # this container runs one application user, and the tools mount it read-only
+    # — so what this grants is the ability to look at a checkout that is about
+    # to be handed to them deliberately.
+    await asyncio.to_thread(workspace.chmod, 0o755)
     checkout = workspace / "repo"
     hooks = workspace / "nohooks"
     await asyncio.to_thread(hooks.mkdir)

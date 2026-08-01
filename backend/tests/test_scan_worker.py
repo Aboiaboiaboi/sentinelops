@@ -277,7 +277,7 @@ class TestExecuteScan:
 
         finished = await reload_scan(session, scan.id)
         assert finished.score == 59
-        assert finished.scoring_version == "v1"
+        assert finished.scoring_version == "v2"
 
     async def test_records_what_each_category_scored(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]

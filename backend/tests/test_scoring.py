@@ -168,4 +168,8 @@ class TestScoreByCategory:
 
 class TestScoringVersion:
     def test_is_recorded_so_old_scores_stay_interpretable(self) -> None:
-        assert SCORING_VERSION == "v1"
+        """Pinned deliberately. Changing the rubric without changing this string
+        makes every old score silently incomparable to every new one, and
+        comparison has no way to know it should decline. v2 re-cut security's 25
+        points across eight checks when the real tools replaced the regexes."""
+        assert SCORING_VERSION == "v2"

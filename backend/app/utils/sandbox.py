@@ -80,10 +80,13 @@ class SandboxSpec:
     command: tuple[str, ...]
     timeout_seconds: int
     memory_mb: int = 512
-    # A named volume holding a pre-warmed database or rule set, mounted
-    # read-only at CACHE_MOUNT. The sandbox has no network, so a tool that needs
-    # data from the internet gets it from here or not at all.
-    cache_volume: str | None = None
+    # Whether this tool needs the pre-warmed database or rule set, mounted
+    # read-only at CACHE_MOUNT. A flag rather than a volume name on purpose:
+    # *which* volume holds it is a deployment fact, and a scanner that knew it
+    # would be a scanner reading configuration. The runner supplies it, and
+    # refuses to run the tool at all if it has none — a tool silently running
+    # against no vulnerability database would report a clean repository.
+    needs_cache: bool = False
 
     def __post_init__(self) -> None:
         # An unpinned image means the tool can change under a scan without a
@@ -112,6 +115,11 @@ class SandboxResult:
     stdout: str
     stderr: str
     timed_out: bool
+    #: The path the *container* saw the checkout at. Tools report absolute paths
+    #: from inside their own filesystem, and a wrapper needs this to turn one
+    #: back into a repository-relative path. It differs by mount mode, which is
+    #: precisely the detail a wrapper must not have to know about.
+    repo_mount: str = ""
 
     @property
     def truncated(self) -> bool:
@@ -219,15 +227,30 @@ class DockerSandbox:
         self,
         *,
         volume: str = "",
+        cache_volume: str = "",
         volume_mount: str = "/data",
         docker_binary: str = "docker",
+        max_timeout_seconds: int = 300,
+        max_memory_mb: int = 512,
     ) -> None:
         self._volume = volume
+        self._cache_volume = cache_volume
+        # Deployment ceilings, not per-tool values. A spec asks for what its
+        # tool needs; the operator decides what any one tool may consume on this
+        # machine, and the smaller of the two wins.
+        self._max_timeout_seconds = max_timeout_seconds
+        self._max_memory_mb = max_memory_mb
         # Matches CLONE_ROOT=/data/repos in the worker stage of the Dockerfile.
         # The two have to agree: this is the path the volume is mounted at in
         # the worker, and therefore the path the clone is already reachable by.
         self._volume_mount = volume_mount
         self._docker = docker_binary
+
+    def _memory_for(self, spec: SandboxSpec) -> int:
+        return min(spec.memory_mb, self._max_memory_mb)
+
+    def _timeout_for(self, spec: SandboxSpec) -> int:
+        return min(spec.timeout_seconds, self._max_timeout_seconds)
 
     def _mount_arguments(self, repo_path: Path) -> tuple[list[str], str]:
         """Mount flags, and the path the container will see the checkout at."""
@@ -271,8 +294,8 @@ class DockerSandbox:
             # Both, together. --memory alone leaves swap unbounded, so a tool
             # over its limit swaps instead of being killed and takes the host's
             # I/O down with it.
-            f"--memory={spec.memory_mb}m",
-            f"--memory-swap={spec.memory_mb}m",
+            f"--memory={self._memory_for(spec)}m",
+            f"--memory-swap={self._memory_for(spec)}m",
             # A fork bomb in a scanned repository is a plausible input, not a
             # hypothetical one.
             "--pids-limit=256",
@@ -293,10 +316,10 @@ class DockerSandbox:
             *mounts,
         ]
 
-        if spec.cache_volume:
+        if spec.needs_cache:
             command += [
                 "--mount",
-                f"type=volume,source={spec.cache_volume},target={CACHE_MOUNT},readonly",
+                f"type=volume,source={self._cache_volume},target={CACHE_MOUNT},readonly",
             ]
 
         # No -e, --env or --env-file anywhere above, and none here. `docker run`
@@ -328,13 +351,20 @@ class DockerSandbox:
             logger.warning("could not remove timed-out sandbox container", extra={"name": name})
 
     def run(self, spec: SandboxSpec, *, repo_path: Path) -> SandboxResult:
+        if spec.needs_cache and not self._cache_volume:
+            # Refused rather than run without it. Trivy with no vulnerability
+            # database finds no vulnerabilities, and that is indistinguishable
+            # from a repository with none — the single worst answer this system
+            # could give.
+            raise SandboxUnavailable(
+                f"{spec.image} needs the warmed cache volume and none is configured."
+            )
+
         name = f"sentinelops-scan-{uuid.uuid4().hex[:12]}"
         command = self._build_command(spec, repo_path, name)
+        timeout = self._timeout_for(spec)
 
-        logger.info(
-            "sandbox starting",
-            extra={"image": spec.image, "timeout_seconds": spec.timeout_seconds},
-        )
+        logger.info("sandbox starting", extra={"image": spec.image, "timeout_seconds": timeout})
 
         try:
             result = subprocess.run(  # noqa: S603 — fixed argv, no shell
@@ -346,14 +376,20 @@ class DockerSandbox:
                 # mangled one is a finding nobody can act on.
                 encoding="utf-8",
                 errors="replace",
-                timeout=spec.timeout_seconds + _CLI_GRACE_SECONDS,
+                timeout=timeout + _CLI_GRACE_SECONDS,
                 env=_docker_environment(),
                 check=False,
             )
         except subprocess.TimeoutExpired:
             self._force_remove(name)
             logger.warning("sandbox timed out", extra={"image": spec.image})
-            return SandboxResult(exit_code=-1, stdout="", stderr="", timed_out=True)
+            return SandboxResult(
+                exit_code=-1,
+                stdout="",
+                stderr="",
+                timed_out=True,
+                repo_mount=self._mount_arguments(repo_path)[1],
+            )
         except (OSError, subprocess.SubprocessError) as exc:
             # No docker binary, or no daemon to talk to. Indistinguishable from
             # the caller's point of view from having no sandbox at all, so it
@@ -371,6 +407,7 @@ class DockerSandbox:
             stdout=_truncate(result.stdout or ""),
             stderr=_truncate(result.stderr or ""),
             timed_out=False,
+            repo_mount=self._mount_arguments(repo_path)[1],
         )
 
     def verify(self) -> str | None:

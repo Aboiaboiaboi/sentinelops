@@ -80,7 +80,10 @@ const CATEGORY_MAX_SCORES: Record<string, number> = {
  * the product rather than in the fixture.
  */
 const DEMO_CATEGORY_SCORES: Record<string, number> = {
-  security: 14,
+  // 25 less the two security findings below, which are worth 5 each under the
+  // v2 rubric. Both numbers move together or the demo shows arithmetic that
+  // the real scanner cannot produce.
+  security: 15,
   reliability: 16,
   architecture: 17,
   observability: 8,
@@ -188,7 +191,7 @@ function toSummary(record: ScanRecord): ScanSummary {
       ...noFailure,
       status: 'completed',
       score: DEMO_SCORE,
-      scoring_version: 'v1',
+      scoring_version: 'v2',
       category_status: DEMO_CATEGORY_STATUS,
       category_scores: DEMO_CATEGORY_SCORES,
       category_max_scores: CATEGORY_MAX_SCORES,
@@ -402,6 +405,17 @@ export const store = {
               reason: null,
             },
             {
+              // Errored, not skipped: the question applies perfectly well to
+              // this repository, we just have not answered it. Modelled here
+              // because it is a state the backend really produces today — both
+              // tool-backed checks report it until Trivy and Semgrep land.
+              id: 'security.dependency_vulnerabilities',
+              category: 'security',
+              title: 'No known-vulnerable dependencies',
+              outcome: 'errored',
+              reason: 'this check is not implemented yet',
+            },
+            {
               id: 'reliability.health',
               category: 'reliability',
               title: 'Health endpoint',
@@ -464,12 +478,12 @@ export const fixtureFindings: Finding[] = [
     scan_id: 'scan_demo',
     category: 'security',
     severity: 'CRITICAL',
-    title: 'Hardcoded secret detected',
+    title: 'Credentials are committed in the code',
     description:
-      'An API key was found committed in source at config/settings.py. Anyone with repository access, including via forks and clones, can read it.',
+      'Gitleaks found what it recognises as live credential formats in 3 places across 2 kinds, starting with config/settings.py (generic api key). Detected: generic api key, aws access token. A committed credential is readable by everyone with repository access, survives in git history after the file is deleted, and ships inside every build artefact made from this code. The values themselves are redacted from this report — SentinelOps never stores them.',
     recommendation:
-      'Move the value to an environment variable, rotate the exposed key, and add a pre-commit secret scan.',
-    score_impact: 10,
+      'Rotate every credential found, before anything else: removing one without rotating it fixes nothing, because the old value is still in history. Then load them from the environment or a secrets manager, and add a pre-commit secret scanner so the next one is caught before it lands.',
+    score_impact: 5,
   },
   {
     id: 'f2',
@@ -480,7 +494,7 @@ export const fixtureFindings: Finding[] = [
     description:
       'requests 2.19.1 is affected by CVE-2018-18074, which leaks Authorization headers across redirects.',
     recommendation: 'Upgrade to requests >= 2.20.0.',
-    score_impact: 6,
+    score_impact: 5,
   },
   {
     id: 'f3',

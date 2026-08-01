@@ -1,11 +1,16 @@
-"""Baseline security checks.
+"""Security checks.
 
-Deliberately shallow, and temporarily so: Phase 3 replaces this with real
-tooling — Gitleaks for secrets, Trivy for dependency vulnerabilities, Semgrep
-for code patterns — each running sandboxed. What lives here is the subset that
-regex over a checkout can do *responsibly*: committed credential files, token
-formats that cannot be anything else, debug mode, and TLS verification switched
-off.
+Part tooling, part reading. Secrets are Gitleaks' job now; dependency
+vulnerabilities and dangerous code patterns become Trivy's and Semgrep's, and
+each of those runs sandboxed through `tools/`. What stays as regex here is the
+subset that plain reading does *responsibly* and fast: committed credential
+files, debug mode, TLS verification switched off, container configuration, and
+.gitignore.
+
+Those five were kept rather than routed through Semgrep deliberately. They are
+dogfooded against real repositories, they cost nothing, and their measured
+false-positive rate is zero — deleting working code to ask the same question
+through a slower tool would be a regression dressed as progress.
 
 The false-positive bar is higher in this category than anywhere else. Telling
 someone they leaked a credential when they did not is alarming in a way "your
@@ -23,16 +28,20 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     code_only,
+    errored,
     failed,
     is_test_file,
     passed,
     skipped,
 )
+from app.scanners.security.tools import gitleaks
 
 CATEGORY = "security"
 
 _CREDENTIAL_FILES = CheckSpec("security.credential_files", "No credential files committed")
 _HARDCODED = CheckSpec("security.hardcoded_secrets", "No secrets hardcoded in source")
+_DEPENDENCIES = CheckSpec("security.dependency_vulnerabilities", "No known-vulnerable dependencies")
+_CODE_PATTERNS = CheckSpec("security.code_patterns", "No dangerous code patterns")
 _DEBUG = CheckSpec("security.debug_mode", "Debug mode off")
 _TLS = CheckSpec("security.tls_verification", "TLS verification enabled")
 _CONTAINER = CheckSpec("security.container_secrets", "No secrets in container configuration")
@@ -42,13 +51,41 @@ _GITIGNORE = CheckSpec("security.gitignore", "Env files protected by .gitignore"
 # and documentation is not passing them — they never ran.
 _NO_SOURCE = "the repository has no hand-written source files"
 
-# Impacts, summing to the category weight of 25.
-_CREDENTIAL_FILE = 6
-_HARDCODED_SECRET = 6
-_DEBUG_ENABLED = 4
-_TLS_DISABLED = 4
-_SECRET_IN_CONTAINER_CONFIG = 3
-_NO_GITIGNORE_PROTECTION = 2
+# Declared now and answered later. Both are wired to their tools in the next two
+# milestones; until then they report ERRORED, which says "this was not
+# established" — the one honest answer available, and the reason that outcome
+# was built before any tool.
+_NOT_YET_IMPLEMENTED = "this check is not implemented yet"
+
+# Impacts, summing to the category weight of 25. Re-cut when the tools arrived:
+# four new points had to come from somewhere, and they came from the checks a
+# real tool now answers better. SCORING_VERSION went to v2 in the same commit,
+# so no scan was ever scored against a rubric that did not sum to 25.
+_CREDENTIAL_FILE = 4
+_HARDCODED_SECRET = gitleaks.BUDGET  # 5
+_VULNERABLE_DEPENDENCY = 5
+_DANGEROUS_CODE_PATTERN = 4
+_DEBUG_ENABLED = 2
+_TLS_DISABLED = 2
+_SECRET_IN_CONTAINER_CONFIG = 2
+_NO_GITIGNORE_PROTECTION = 1
+
+CATEGORY_BUDGET = 25
+
+# Checked at import rather than trusted, the same way scoring_service checks its
+# weights. Impacts that do not sum to the category weight mean a repository can
+# lose more than security is worth, or can never lose all of it.
+assert (
+    _CREDENTIAL_FILE
+    + _HARDCODED_SECRET
+    + _VULNERABLE_DEPENDENCY
+    + _DANGEROUS_CODE_PATTERN
+    + _DEBUG_ENABLED
+    + _TLS_DISABLED
+    + _SECRET_IN_CONTAINER_CONFIG
+    + _NO_GITIGNORE_PROTECTION
+    == CATEGORY_BUDGET
+), "security check impacts must sum to the category weight"
 
 
 # --- Committed credential files --------------------------------------------
@@ -104,36 +141,7 @@ _PRIVATE_KEY_HEADER = re.compile(r"-----BEGIN (?:[A-Z ]*)?PRIVATE KEY-----")
 _BINARY_KEY_EXTENSIONS = frozenset({".p12", ".pfx", ".jks", ".keystore"})
 
 
-# --- Hardcoded secrets ------------------------------------------------------
-
-# Tier A: token formats that cannot be anything except what they are. Each of
-# these is issued by one provider with one prefix, so a match is a credential —
-# the only question is whether it is live.
-_KNOWN_TOKEN_FORMATS = re.compile(
-    r"AKIA[0-9A-Z]{16}"  # AWS access key id
-    r"|ghp_[A-Za-z0-9]{36}"  # GitHub personal access token
-    r"|gho_[A-Za-z0-9]{36}"  # GitHub OAuth token
-    r"|github_pat_[A-Za-z0-9_]{22,}"  # GitHub fine-grained PAT
-    r"|sk_live_[A-Za-z0-9]{24,}"  # Stripe live secret key
-    r"|rk_live_[A-Za-z0-9]{24,}"  # Stripe live restricted key
-    r"|xox[baprs]-[A-Za-z0-9-]{10,}"  # Slack tokens
-    r"|AIza[0-9A-Za-z_-]{35}"  # Google API key
-    r"|ya29\.[0-9A-Za-z_-]{20,}"  # Google OAuth access token
-    r"|glpat-[A-Za-z0-9_-]{20,}"  # GitLab PAT
-    r"|npm_[A-Za-z0-9]{36}"  # npm token
-)
-
-# Tier B: an assignment whose left side names a secret and whose right side is a
-# literal. Where small-project leaks actually live, and also the riskiest
-# pattern in this file — hence the guards below.
-_SECRET_ASSIGNMENT = re.compile(
-    r"""(?:password|passwd|api_key|apikey|api_secret|secret_key|secretkey
-         |auth_token|access_token|private_key|client_secret|db_password
-         |database_password|admin_password)
-        \s*[:=]\s*
-        (?P<quote>["'])(?P<value>[^"']{8,})(?P=quote)""",
-    re.IGNORECASE | re.VERBOSE,
-)
+# --- Placeholder values -----------------------------------------------------
 
 # Values that are obviously not real secrets. A placeholder in an example, a
 # variable being interpolated, a reference to configuration — flagging any of
@@ -254,11 +262,19 @@ def _is_compose_file(path: Path) -> bool:
 
 class SecurityScanner:
     category = CATEGORY
-    CHECKS = (_CREDENTIAL_FILES, _HARDCODED, _DEBUG, _TLS, _CONTAINER, _GITIGNORE)
+    CHECKS = (
+        _CREDENTIAL_FILES,
+        _HARDCODED,
+        _DEPENDENCIES,
+        _CODE_PATTERNS,
+        _DEBUG,
+        _TLS,
+        _CONTAINER,
+        _GITIGNORE,
+    )
 
     def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         credential_files: list[str] = []
-        secret_files: list[str] = []
         debug_files: list[str] = []
         tls_files: list[str] = []
         container_files: list[str] = []
@@ -282,8 +298,6 @@ class SecurityScanner:
             content = code_only(repo.read(path))
             if not content:
                 continue
-            if self._holds_hardcoded_secret(content):
-                secret_files.append(repo.relative(path))
             if self._enables_debug(path, content):
                 debug_files.append(repo.relative(path))
             if _TLS_DISABLED_PATTERN.search(content):
@@ -292,7 +306,12 @@ class SecurityScanner:
         has_source = bool(repo.production_files)
         return [
             self._check_credential_files(credential_files),
-            self._check_hardcoded_secrets(has_source, secret_files),
+            # The only check here that leaves the process. It runs a container,
+            # so it is the slowest thing in this scanner by a wide margin — and
+            # it is why scanners are dispatched off the event loop.
+            gitleaks.scan_for_secrets(_HARDCODED, repo),
+            errored(_DEPENDENCIES, _NOT_YET_IMPLEMENTED),
+            errored(_CODE_PATTERNS, _NOT_YET_IMPLEMENTED),
             self._check_debug(has_source, debug_files),
             self._check_tls(has_source, tls_files),
             self._check_container_config(container_configs, container_files),
@@ -330,18 +349,6 @@ class SecurityScanner:
         for match in pattern.finditer(content):
             value = match.group("value").strip().strip("'\"")
             if value and not _PLACEHOLDER_VALUE.search(value):
-                return True
-        return False
-
-    def _holds_hardcoded_secret(self, content: str) -> bool:
-        # Even a known token format gets the placeholder check: fake keys in
-        # documentation and UI examples are written *in* the real format with
-        # FAKE or EXAMPLE spelled into the middle, and matched without looking.
-        for match in _KNOWN_TOKEN_FORMATS.finditer(content):
-            if not _PLACEHOLDER_VALUE.search(match.group()):
-                return True
-        for match in _SECRET_ASSIGNMENT.finditer(content):
-            if not _PLACEHOLDER_VALUE.search(match.group("value")):
                 return True
         return False
 
@@ -389,33 +396,6 @@ class SecurityScanner:
                     "blanked .env.example instead so newcomers know what to configure."
                 ),
                 score_impact=_CREDENTIAL_FILE,
-            ),
-        )
-
-    def _check_hardcoded_secrets(self, has_source: bool, found: list[str]) -> CheckResult:
-        if not has_source:
-            return skipped(_HARDCODED, _NO_SOURCE)
-        if not found:
-            return passed(_HARDCODED)
-        others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return failed(
-            _HARDCODED,
-            ScanFinding(
-                category=CATEGORY,
-                severity=Severity.CRITICAL,
-                title="Secrets are hardcoded in source",
-                description=(
-                    f"{found[0]}{others} contains what looks like a real credential in the code "
-                    "itself. It is readable by anyone with repository access, it survives in git "
-                    "history after removal, and it ships inside every build artefact made from "
-                    "this code."
-                ),
-                recommendation=(
-                    "Rotate the credential first. Then load it from the environment or a secrets "
-                    "manager, and add a pre-commit secret scanner so the next one is caught before "
-                    "it lands."
-                ),
-                score_impact=_HARDCODED_SECRET,
             ),
         )
 
