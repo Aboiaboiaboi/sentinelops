@@ -28,17 +28,27 @@ Here is SentinelOps scanning **itself**, which is the real output of the
 commands below rather than an illustration:
 
 ```
-sentinelops                                        92 / 100    Grade A
+sentinelops                                        90 / 100    Grade A
 6 of 6 categories reported
-29 checks: 21 passed · 4 skipped · 2 failed · 2 not yet implemented
+29 checks: 21 passed · 4 skipped · 3 failed · 1 not yet implemented
 
-  Security         25 / 25   ████████████████████
+  Security         23 / 25   ██████████████████░░
   Architecture     20 / 20   ████████████████████
   Reliability      20 / 20   ████████████████████
   Scalability      10 / 10   ████████████████████
   Deployment       11 / 15   ██████████████░░░░░░
   Observability     6 / 10   ████████████░░░░░░░░
 ```
+
+The two points Security lost are a real advisory against a version this project
+pins, found by Trivy on the run above — not an illustration:
+
+> **Dependencies have known vulnerabilities** · MEDIUM · −2
+> react-router 6.30.4 is affected by CVE-2026-53666 (medium). React Router:
+> Information disclosure via client-side constructor execution. It is the worst
+> of 3 known vulnerabilities across 2 packages.
+>
+> **Recommendation:** Upgrade react-router to a fixed version, then re-scan.
 
 Each finding tells you what it found and what to do:
 
@@ -51,7 +61,8 @@ Each finding tells you what it found and what to do:
 > health, and send unhandled exceptions to an error tracker so they are seen
 > without being hunted.
 
-Both of its findings are fair, and both are on the roadmap below.
+All three of its findings are fair. Two are on the roadmap below; the third is a
+dependency upgrade this project owes, reported by its own scanner.
 
 It **reads** code and configuration. It never runs the repository, deploys
 anything, or changes it.
@@ -137,6 +148,12 @@ it, or change the port mapping in `docker-compose.yml`.
 `docker compose ps` should show `worker` as healthy; `docker compose logs worker`
 will say why if it isn't.
 
+**The security tool checks all say "errored"** — the worker could not start a
+sandbox. `docker compose logs worker | grep sandbox` says which: an unreachable
+Docker daemon, or a cache volume that has not been warmed yet. The warm jobs run
+on `docker compose up` and can be re-run on their own with
+`docker compose up warm-trivy warm-semgrep`.
+
 **Want to see the app without a backend at all?**
 
 ```bash
@@ -179,10 +196,15 @@ category; the rule only bites when nothing ran at all.
 The security category is part tooling, part reading. **Gitleaks** answers "is a
 credential committed here?" — it runs in a sandbox with no network, and secrets
 are redacted from its output before SentinelOps ever sees them, so the finding
-records *that* a credential is exposed and never the credential itself. Trivy
-and Semgrep follow, for vulnerable dependencies and dangerous code patterns;
-until they land, those two checks report **not yet implemented** rather than
-passing, because a check nobody has written has not established anything.
+records *that* a credential is exposed and never the credential itself.
+
+**Trivy** answers "does this project pin a version with a published
+vulnerability?" — against a database warmed into a read-only volume, because the
+sandbox has no network to fetch one. A repository with no lockfile it recognises
+is *skipped*, not passed: nothing was demonstrated. Semgrep follows for
+dangerous code patterns, and until it lands that check reports **not yet
+implemented** rather than passing, because a check nobody has written has not
+established anything.
 
 The five regex checks that remain — credential files, debug mode, TLS overrides,
 container secrets, `.gitignore` — were kept rather than routed through a tool.
@@ -278,6 +300,12 @@ uv run python -m app.workers.main
 > own logging config after importing settings, which leaks plain-text lines into
 > an otherwise JSON log stream.
 
+> **A host-run worker has no sandbox** unless you ask for one, so the tool-backed
+> security checks report *errored* — honestly, rather than passing. To run them,
+> set `SANDBOX_ENABLED=true` (leave `SANDBOX_VOLUME` empty, which bind-mounts the
+> clone by its real path) and `SANDBOX_CACHE_VOLUME=sentinelops_sandbox_cache`
+> after `docker compose up warm-trivy warm-semgrep` has populated it.
+
 **Frontend:**
 
 ```bash
@@ -293,7 +321,7 @@ never readable from JavaScript.
 ### Running the checks
 
 ```bash
-# Backend — 882 tests. Needs Postgres running. The sandbox integration tests
+# Backend — 908 tests. Needs Postgres running. The sandbox integration tests
 # skip themselves when no Docker daemon is reachable.
 cd backend
 uv run pytest
@@ -336,6 +364,25 @@ Logs are structured JSON throughout, so they're filterable:
 ```bash
 docker compose logs worker | grep '"category scanned"'
 ```
+
+### Adding a tool-backed check
+
+`backend/app/scanners/security/tools/` has one module per tool, and each owns
+three things: the `SandboxSpec` that runs it, the parsing of its output, and the
+translation into a `CheckResult`. Copy `trivy.py`.
+
+Before writing a line of it, **run the tool by hand and record its exit codes**.
+Both tools here had a trap: Gitleaks exits 1 for "leaks found" *and* for "I could
+not read that directory" (so it runs with `--exit-code 0`), and Trivy exits 0 on
+findings but 1 with no vulnerability database. Read either backwards and the
+scanner reports a broken run as a clean repository — which is worse than
+reporting nothing at all.
+
+The rules that follow from that: a tool that could not run is `errored`, never
+`passed`; a question that does not apply — no lockfile, say — is `skipped` with
+a reason; the tool's own stderr goes to the log and never into the database; and
+the spec sets `needs_cache` rather than naming a volume, so a scanner never
+reads deployment configuration.
 
 ### Adding a scanner
 
@@ -407,8 +454,10 @@ disappearing.
 |---|---|
 | `backend/app/api/` | HTTP layer. Thin — calls `services/`, never the ORM directly |
 | `backend/app/services/` | Business logic, shared by the API and the worker |
-| `backend/app/scanners/` | Pure: a repository in, check results out. No database, no API |
+| `backend/app/scanners/` | A repository in, check results out. No database, no API |
+| `backend/app/scanners/security/tools/` | One module per sandboxed tool: build the spec, parse the output, return a `CheckResult` |
 | `backend/app/workers/` | Queue tasks and repository cloning |
+| `backend/app/utils/sandbox.py` | The container boundary. The only place that starts a process the repository can influence |
 | `backend/app/models/` `schemas/` | Database tables, and API shapes — deliberately separate |
 | `frontend/src/api/` `hooks/` | Fetch functions, and the query wrappers around them |
 | `frontend/src/pages/` `components/` | Screens and the pieces they're built from |
@@ -445,6 +494,16 @@ Repositories are treated as hostile input, because they are:
   database, and a failure's stored detail is fixed text chosen by the error
   type — never the error text itself, which can echo a URL carrying a token
 
+The security tools go further, because they are the only thing here that
+*executes* third-party binaries against a stranger's code. Each runs in its own
+container with **no network at all**, a read-only root filesystem, every Linux
+capability dropped, `no-new-privileges`, bounded memory, CPU and process count,
+as uid 65534, with the checkout mounted read-only. Its vulnerability database
+arrives through a cache volume it can only read, because it has no way to fetch
+one. Images are pinned by tag — an unpinned tool could change under a scan and
+make a score change unexplainable — and the sandbox refuses to run at all rather
+than run something unisolated.
+
 Passwords use bcrypt, hashed off the event loop. The auth token is an `httpOnly`
 cookie rather than localStorage, since a tool that assesses other people's
 security shouldn't use an XSS-readable token store. Login runs in constant time
@@ -462,9 +521,9 @@ endpoints are rate limited.
       comparison, and editing that preserves history
 - [ ] **Security tooling** — real tools instead of regexes, each in its own
       sandbox behind a `SandboxRunner` boundary. Gitleaks is in and answers the
-      leaked-secret check; Trivy (vulnerable dependencies) and Semgrep
-      (dangerous code patterns) are next, and their checks report *not yet
-      implemented* until they land. OSV was dropped as a duplicate of Trivy
+      leaked-secret check and Trivy the vulnerable-dependency one; Semgrep
+      (dangerous code patterns) is next, and its check reports *not yet
+      implemented* until it lands. OSV was dropped as a duplicate of Trivy
 - [ ] **Reporting** — PDF export
 - [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
       Cloud Run
@@ -473,7 +532,9 @@ Private repositories use a GitHub App rather than stored access tokens, so
 credentials expire hourly and are never persisted.
 
 Deliberately deferred: CI for SentinelOps itself and metrics — which are, not
-coincidentally, the only two findings its own scanner reports about it.
+coincidentally, two of the three findings its own scanner reports about it. The
+third arrived the day Trivy did: a real advisory against a pinned version, which
+is the point of running the thing on yourself.
 
 ## Stack
 

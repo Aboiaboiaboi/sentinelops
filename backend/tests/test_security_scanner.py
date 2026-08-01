@@ -183,16 +183,14 @@ class TestHardcodedSecrets:
 
 
 class TestChecksAwaitingTheirTool:
-    """Declared in this milestone, wired to Trivy and Semgrep in the next two.
+    """Declared and budgeted, still waiting for Semgrep.
 
-    They report ERRORED meanwhile — not skipped, which would tell somebody the
+    It reports ERRORED meanwhile — not skipped, which would tell somebody the
     question does not apply to their code, and not passed, which would be a
     claim nobody made.
     """
 
-    @pytest.mark.parametrize(
-        "check_id", ["security.dependency_vulnerabilities", "security.code_patterns"]
-    )
+    @pytest.mark.parametrize("check_id", ["security.code_patterns"])
     def test_reports_errored_until_implemented(self, tmp_path: Path, check_id: str) -> None:
         _write(tmp_path, "app.py", "x = 1\n")
         results = SCANNER.scan(RepositoryIndex.build(tmp_path, framework="FastAPI"))

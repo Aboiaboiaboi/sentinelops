@@ -34,7 +34,7 @@ from app.scanners.base import (
     passed,
     skipped,
 )
-from app.scanners.security.tools import gitleaks
+from app.scanners.security.tools import gitleaks, trivy
 
 CATEGORY = "security"
 
@@ -51,10 +51,9 @@ _GITIGNORE = CheckSpec("security.gitignore", "Env files protected by .gitignore"
 # and documentation is not passing them — they never ran.
 _NO_SOURCE = "the repository has no hand-written source files"
 
-# Declared now and answered later. Both are wired to their tools in the next two
-# milestones; until then they report ERRORED, which says "this was not
-# established" — the one honest answer available, and the reason that outcome
-# was built before any tool.
+# Declared, budgeted, and still waiting for Semgrep. It reports ERRORED until
+# then, which says "this was not established" — the one honest answer available,
+# and the reason that outcome was built before any tool.
 _NOT_YET_IMPLEMENTED = "this check is not implemented yet"
 
 # Impacts, summing to the category weight of 25. Re-cut when the tools arrived:
@@ -63,7 +62,7 @@ _NOT_YET_IMPLEMENTED = "this check is not implemented yet"
 # so no scan was ever scored against a rubric that did not sum to 25.
 _CREDENTIAL_FILE = 4
 _HARDCODED_SECRET = gitleaks.BUDGET  # 5
-_VULNERABLE_DEPENDENCY = 5
+_VULNERABLE_DEPENDENCY = trivy.BUDGET  # 5
 _DANGEROUS_CODE_PATTERN = 4
 _DEBUG_ENABLED = 2
 _TLS_DISABLED = 2
@@ -310,7 +309,7 @@ class SecurityScanner:
             # so it is the slowest thing in this scanner by a wide margin — and
             # it is why scanners are dispatched off the event loop.
             gitleaks.scan_for_secrets(_HARDCODED, repo),
-            errored(_DEPENDENCIES, _NOT_YET_IMPLEMENTED),
+            trivy.scan_dependencies(_DEPENDENCIES, repo),
             errored(_CODE_PATTERNS, _NOT_YET_IMPLEMENTED),
             self._check_debug(has_source, debug_files),
             self._check_tls(has_source, tls_files),
