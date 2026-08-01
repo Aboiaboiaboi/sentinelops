@@ -167,10 +167,6 @@ async def update_project(
     return project
 
 
-async def repository_url_editable(db: AsyncSession, *, project_id: uuid.UUID) -> bool:
-    return await _url_lock_reason(db, project_id=project_id) is None
-
-
 async def delete_project(db: AsyncSession, *, owner: User, project_id: uuid.UUID) -> bool:
     """Delete a project, returning whether it was there to delete.
 

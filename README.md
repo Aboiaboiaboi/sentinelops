@@ -4,12 +4,14 @@
 
 **Is this application ready for production?**
 
-Point SentinelOps at a Git repository. It clones it, inspects it across six
-categories, and gives you a score out of 100 with specific findings — what's
-wrong, why it matters, and what to do about it.
+Point SentinelOps at a Git repository. It clones it, runs 27 checks across six
+categories, and gives you a score out of 100 — with specific findings, the
+commit it looked at, what changed since last time, and what it verified rather
+than only what broke.
 
 [Quick start](#quick-start-5-minutes) ·
 [What it checks](#what-it-checks) ·
+[Features](#features-and-why-they-exist) ·
 [For developers](#for-developers) ·
 [How it works](#how-it-works)
 
@@ -19,14 +21,12 @@ wrong, why it matters, and what to do about it.
 
 ## What it does
 
-You give it a repository URL. A few seconds later you get something like this:
-
-Here is SentinelOps scanning **itself**, which is the real output of the
-commands below rather than an illustration:
+Here is SentinelOps scanning **itself** — the real output of a clone-and-scan,
+not an illustration:
 
 ```
 sentinelops                                        92 / 100    Grade A
-6 of 6 categories reported
+6 of 6 categories reported     27 checks: 21 passed · 4 skipped · 2 failed
 
   Security         25 / 25   ████████████████████
   Architecture     20 / 20   ████████████████████
@@ -36,7 +36,7 @@ sentinelops                                        92 / 100    Grade A
   Observability     6 / 10   ████████████░░░░░░░░
 ```
 
-Each finding tells you what it found and what to do:
+Every finding says what it found, why it matters, and what to do:
 
 > **No metrics or error tracking** · MEDIUM · −4
 > No metrics, tracing, or error-reporting library was found. Nothing measures
@@ -47,7 +47,7 @@ Each finding tells you what it found and what to do:
 > health, and send unhandled exceptions to an error tracker so they are seen
 > without being hunted.
 
-Both of its findings are fair, and both are on the roadmap below.
+Both of its own findings are fair, and both are on the roadmap below.
 
 It **reads** code and configuration. It never runs the repository, deploys
 anything, or changes it.
@@ -142,42 +142,188 @@ scan progress. Set it back to `false` to use the real thing.
 
 ## What it checks
 
-Six categories, weighted to sum to 100:
+Six categories, weighted to sum to 100, and 27 individual checks:
 
-| Category | Weight | Status | What it looks at |
-|---|---:|:---:|---|
-| **Security** | 25 | ✅ | committed credentials, hardcoded secrets, debug mode, TLS overrides |
-| **Reliability** | 20 | ✅ | health endpoint, request timeouts, retries, swallowed errors |
-| **Architecture** | 20 | ✅ | tests, dependency locking, file size, layout, documentation |
-| **Deployment** | 15 | ✅ | Dockerfile, image pinning, non-root user, healthcheck, CI |
-| **Observability** | 10 | ✅ | logging, structured output, metrics and error tracking |
-| **Scalability** | 10 | ✅ | in-memory state, local file storage, connection pooling |
+| Category | Weight | Checks | What it looks at |
+|---|---:|---:|---|
+| **Security** | 25 | 6 | committed credentials, hardcoded secrets, debug mode, TLS verification, container secrets, `.gitignore` |
+| **Reliability** | 20 | 4 | health endpoint, call timeouts, swallowed errors, retries |
+| **Architecture** | 20 | 5 | tests, dependency locking, file size, module layout, README |
+| **Deployment** | 15 | 6 | deployment config, image pinning, non-root, healthcheck, build context, CI |
+| **Observability** | 10 | 3 | logging, structured output, metrics and error tracking |
+| **Scalability** | 10 | 3 | in-memory state, local file storage, connection pooling |
 
-All six scanners are live, so a spotless repository really can score 100. A
-category that fails to report **contributes nothing** — it isn't quietly
-excluded from the total, so a partial scan can't masquerade as a thorough one.
-
-The security category is a deliberately shallow baseline for now — checks that
-plain reading can do responsibly. Dedicated tools (Gitleaks, Trivy, Semgrep,
-OSV) replace and deepen it in a later phase, each running in its own sandbox.
+A repository with nothing wrong scores 100. The security category is a
+deliberately shallow baseline for now — dedicated tools (Gitleaks, Trivy,
+Semgrep, OSV) replace it in a later phase, each sandboxed.
 
 ### It tries hard not to cry wolf
 
 A scanner that flags healthy code gets ignored, and then it catches nothing. So:
 
 - **A CLI tool isn't penalised for having no health endpoint.** It shouldn't
-  have one. Checks that only make sense for a web service only run for one.
+  have one. Checks that only make sense for a web service are *skipped* for
+  everything else — and skipped is reported as skipped, never as passed.
 - **Test files are judged differently from production code.** A test that
   deliberately swallows an exception is fine.
 - **Machine-generated code is excluded.** On some repositories that's 80%+ of
   the files, and "split this 4000-line generated client into modules" is not
   advice anyone can act on.
 - **A library mentioned in a comment isn't a library you use.** Evidence means
-  an import, a dependency, or an actual call.
+  an import, a dependency, or an actual call — never prose.
 - **A filename alone never convicts.** A committed `.env` where every secret is
   blank or `changethis` is a template; a `.pem` is flagged only if its own
-  header says *private* key, because a public certificate is supposed to be
-  committed; `${VAR}` in an `.npmrc` is interpolation done right, not a token.
+  header says *private key*, because a public certificate is meant to be
+  committed.
+
+---
+
+## Features, and why they exist
+
+Every feature below exists because of a specific way a naive version would have
+lied to you. The code excerpts are the real thing, trimmed.
+
+### 1. A score that can't be gamed by silence
+
+**The problem.** Each scanner is built to stay quiet rather than guess. Summed
+up, that meant an *empty repository* scored **77/100** — it beat a real Flask
+app, because nothing could be found wrong with nothing.
+
+**What we do.** A category that assessed nothing contributes nothing, and the
+denominator never shrinks:
+
+```python
+# workers/scan_tasks.py — a repository with no source is not an application
+if not index.source_files:
+    for category in SCAN_CATEGORIES:
+        await record(category, CategoryStatus.FAILED)
+    return findings, category_status, checks
+
+# ...and a category whose every check skipped assessed nothing either
+if results and all(result.outcome is CheckOutcome.SKIPPED for result in results):
+    await record(category, CategoryStatus.FAILED)
+```
+
+**Why it matters.** An empty repo now scores **0**, and the UI says *"0 of 6
+categories reported"* so the zero is explained rather than accusatory. One
+passing check is enough to keep a category — the rule only bites when nothing
+ran at all.
+
+### 2. Check-level results, not just failures
+
+**The problem.** Scanners returned findings — problems only. So *"this service
+has a health endpoint"* and *"this is a CLI tool, the question doesn't apply"*
+were both an empty list. A category showing full marks couldn't say whether it
+had verified anything.
+
+**What we do.** Every check reports its own outcome:
+
+```python
+# scanners/reliability/scanner.py
+def _check_health(self, repo: RepositoryIndex, has_health: bool) -> CheckResult:
+    if not repo.is_service:
+        return skipped(_HEALTH, "only asked of something that serves traffic")
+    if has_health:
+        return passed(_HEALTH)
+    return failed(_HEALTH, ScanFinding(...))
+```
+
+**Why this design.** The cheaper alternative — declare the checks and infer
+passes by subtraction — was rejected: forgetting one line would silently report
+a check as **passed**, which is exactly the class of lie this project keeps
+hunting. Here a missed check is a type error, and a shared test asserts every
+scanner accounts for every check it declares, on every repository.
+
+### 3. Commit context
+
+```python
+# workers/repo.py — free on a shallow clone
+_COMMIT_FORMAT = "%H%x00%an%x00%aI%x00%s"
+```
+
+**Why.** *"The score dropped 6"* is much more useful as *"the score dropped 6
+**at this commit**"*. Recorded before the scanners run, so a scan that fails
+partway still says what it was looking at.
+
+### 4. Real reasons when a scan fails
+
+**The problem.** A failed scan said *"failed"* and nothing else — a dead end.
+
+**What we do.** Seven categories, each with a stored detail and a hint derived
+from the category. The subtle part is where the detail comes from:
+
+```python
+# workers/scan_tasks.py — stderr is READ to classify, and never stored
+haystack = str(error).lower()
+for signature, category in _CLONE_FAILURE_SIGNATURES:
+    if signature in haystack:
+        return category, _ERROR_DETAILS[category]   # fixed text, not stderr
+```
+
+**Why.** git's stderr can echo the clone URL, and for a private repository that
+URL carries an installation token. Credentials are redacted before the text
+goes anywhere — including the log — and the *stored* detail is fixed text chosen
+by the match, never the text that produced it.
+
+### 5. Scan-to-scan comparison
+
+**What you see.** `+36` with the categories that moved and the exact checks
+that flipped, regressions first.
+
+**The interesting part is what it refuses to do:**
+
+```python
+# services/comparison_service.py
+if previous.scoring_version != current.scoring_version:
+    return ScanComparison(comparable=False, reason=(
+        "These scans were scored under different rubrics ... so the difference "
+        "between them would measure a change in SentinelOps rather than in the "
+        "repository."), ...)
+```
+
+Three refusals in total: a rubric change declines the delta; a category that
+stopped being assessed reports `null` rather than minus its weight; and a check
+*we* added since the last scan isn't counted as a change, because the repository
+didn't move — we did.
+
+### 6. Private repositories, without storing credentials
+
+```python
+# services/github_app_service.py
+JWT_BACKDATE_SECONDS = 60      # absorbs clock drift vs GitHub
+JWT_LIFETIME_SECONDS = 9 * 60  # GitHub rejects anything over ten minutes
+TOKEN_SAFETY_MARGIN_SECONDS = 5 * 60
+```
+
+**Why a GitHub App and not a token you paste in.** A personal access token in
+our database is a long-lived credential to your source code; a breach hands over
+everything. An App mints installation tokens that **expire in an hour, live in
+memory, and are never written down**. A tool that assesses your security
+shouldn't be storing your keys.
+
+The token reaches git through `--config-env=http.extraHeader`, never the URL —
+a URL-embedded token persists into the clone's `.git/config` and shows in
+process listings. There's a test that clones with a marker credential and greps
+the checkout to prove no trace remains.
+
+### 7. Editing that keeps history honest
+
+| Project state | Repository URL | Name |
+|---|---|---|
+| No scans yet | editable | editable |
+| Only failed scans | **editable** | editable |
+| A scan pending or running | frozen — worker holds the old target | editable |
+| Any scan completed | **frozen** | editable |
+
+**Why the split.** The reason people want to edit a URL is almost always a
+typo — and a typo means the scan *failed*, which produced no score and no
+findings, so nothing is falsified by fixing it. A **completed** scan is
+different: repointing the project would leave its history describing a
+repository the project no longer names.
+
+Scan records are immutable except for a name. Timestamps and results describe
+what happened, and a record that could be rewritten is worth nothing as
+evidence.
 
 ---
 
@@ -195,7 +341,7 @@ A scanner that flags healthy code gets ignored, and then it catches nothing. So:
 ### Reproducing the dev environment
 
 ```bash
-# Infrastructure only — leave the app to run on your host for fast reloads
+# Infrastructure only — leave the app on your host for fast reloads
 docker compose up -d postgres redis
 ```
 
@@ -235,20 +381,20 @@ never readable from JavaScript.
 ### Running the checks
 
 ```bash
-# Backend — 532 tests. Needs Postgres running.
+# Backend — 805 tests. Needs Postgres running.
 cd backend
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 
-# Frontend — 58 tests
+# Frontend — 68 tests
 cd frontend
 npm run typecheck && npm run lint && npm run test && npm run build
 ```
 
 Tests run against a **real Postgres**, not SQLite. The schema uses JSONB, native
-enums and `ON DELETE CASCADE`, none of which SQLite reproduces faithfully — a
-SQLite suite would pass while the real database rejected the same code. A
-disposable `sentinelops_test` database is created and dropped per run.
+enums and `ON DELETE CASCADE`, none of which SQLite reproduces — a SQLite suite
+would pass while the real database rejected the same code. A disposable
+`sentinelops_test` database is created and dropped per run.
 
 ### Database migrations
 
@@ -260,30 +406,29 @@ uv run alembic downgrade -1                          # undo one
 
 > **Two things Alembic won't do for you.** It never autogenerates
 > `server_default`, so adding a `NOT NULL` column produces a migration that
-> works on an empty database and fails on a populated one — always add one by
-> hand and test against real rows. And it won't drop Postgres `ENUM` types in a
-> downgrade, so those need explicit `sa.Enum(name=...).drop()` calls.
-
-### Watching a scan
-
-```bash
-docker compose logs -f worker
-```
-
-Logs are structured JSON throughout, so they're filterable:
-
-```bash
-docker compose logs worker | grep '"category scanned"'
-```
+> works on an empty database and fails on a populated one — declare it on the
+> column and test against real rows. And it won't drop Postgres `ENUM` types in
+> a downgrade, so those need explicit `sa.Enum(name=...).drop()` calls. Newer
+> columns use plain `String` with a Python enum for exactly this reason.
 
 ### Adding a scanner
 
 Three steps:
 
 1. Create `backend/app/scanners/<category>/scanner.py` with a class exposing
-   `category: str` and `scan(repo: RepositoryIndex) -> list[ScanFinding]`
+   `category: str`, `CHECKS: tuple[CheckSpec, ...]`, and
+   `scan(repo: RepositoryIndex) -> list[CheckResult]`
 2. Register it in `backend/app/scanners/registry.py`
 3. Add `backend/tests/test_<category>_scanner.py`
+
+```python
+class MyScanner:
+    category = "reliability"
+    CHECKS = (_HEALTH, _TIMEOUTS)
+
+    def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
+        return [self._check_health(repo), self._check_timeouts(repo)]
+```
 
 Scanners are **synchronous** and receive a pre-built `RepositoryIndex` — the
 tree is walked once per scan, not once per scanner. The worker dispatches them
@@ -291,7 +436,26 @@ off the event loop.
 
 Conventions: impacts sum to exactly the category weight; one finding per
 *problem* rather than per file; read `production_files`; guard service-only
-checks with `repo.is_service`.
+checks with `repo.is_service`; return a result for **every** declared check —
+a shared test enforces it.
+
+### The API
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/auth/signup` · `/auth/login` | Rate-limited, constant-time |
+| `GET POST` | `/projects` | List and create |
+| `GET PATCH DELETE` | `/projects/{id}` | Read, edit, remove |
+| `POST GET` | `/projects/{id}/scans` | Start a scan · scan history |
+| `GET PATCH` | `/scans/{id}` | Poll a scan · name it |
+| `GET` | `/scans/{id}/findings` | What's wrong |
+| `GET` | `/scans/{id}/checks` | What was checked, and the outcome of each |
+| `GET` | `/scans/{id}/comparison` | Versus the previous scan |
+| `GET` | `/github/install` · `/setup` · `/installations` · `/repositories` | Private repos |
+
+`GET /scans/{id}` is polled every 3 seconds while a scan runs, so it stays one
+indexed row read. Findings, checks and comparisons each get their own endpoint,
+fetched once when needed, rather than riding along with every poll.
 
 ---
 
@@ -304,7 +468,7 @@ Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
                        Redis queue ──► Worker ┘
                                           │
                                           ▼
-                            clone → index → scanners → score
+                   clone → index → 6 scanners → 27 checks → score
 ```
 
 The API only creates a scan record and queues a job — it never does the slow
@@ -321,18 +485,22 @@ disappearing.
 |---|---|
 | `backend/app/api/` | HTTP layer. Thin — calls `services/`, never the ORM directly |
 | `backend/app/services/` | Business logic, shared by the API and the worker |
-| `backend/app/scanners/` | Pure: a repository in, findings out. No database, no API |
+| `backend/app/scanners/` | Pure: a repository in, check results out. No database, no API |
 | `backend/app/workers/` | Queue tasks and repository cloning |
 | `backend/app/models/` `schemas/` | Database tables, and API shapes — deliberately separate |
 | `frontend/src/api/` `hooks/` | Fetch functions, and the query wrappers around them |
 | `frontend/src/pages/` `components/` | Screens and the pieces they're built from |
 
-Two boundaries do real work:
+Three boundaries do real work:
 
 - **`schemas/` is not `models/`.** The `User` table has a `password_hash`; no
   response schema references it, so it cannot leak.
+- **`scanners/` imports nothing from the app.** A scanner is testable against a
+  directory in `tmp_path` with no database, no queue, no HTTP.
 - **`utils/storage.py` and `utils/queue.py`** are the only files allowed to know
-  about a cloud SDK. Swapping Redis for SQS is a change in one file.
+  about a cloud SDK. There are currently **zero** cloud SDK dependencies, so the
+  containers run anywhere; a third boundary (`SandboxRunner`) joins them in the
+  next phase.
 
 ### Security
 
@@ -346,6 +514,7 @@ Repositories are treated as hostile input, because they are:
 - Every clone is deleted afterwards, whether the scan succeeded or not
 - The worker runs as a non-root user, with application code read-only to it
 - Only the worker image contains `git` — the API cannot clone anything
+- Credentials are redacted from git output before it reaches a log or a database
 
 Passwords use bcrypt, hashed off the event loop. The auth token is an `httpOnly`
 cookie rather than localStorage, since a tool that assesses other people's
@@ -358,29 +527,30 @@ endpoints are rate limited.
 ## Roadmap
 
 - [x] **Foundation** — auth, database, API, Docker
-- [x] **Scanning engine** — all 6 scanners, plus private repositories
-- [ ] **Explainability** — commit context on each scan, real reasons when one
-      fails, which checks passed rather than only what broke, and scan-to-scan
-      comparison
-- [ ] **Security tooling** — Gitleaks, Trivy, Semgrep, OSV, each in its own
-      sandbox
+- [x] **Scanning engine** — 6 scanners, 27 checks, private repositories
+- [x] **Explainability** — commit context, failure reasons, check outcomes,
+      scan comparison, editing
+- [ ] **Security tooling** — Gitleaks, Trivy, Semgrep and OSV, each in its own
+      sandbox, behind a `SandboxRunner` boundary
 - [ ] **Reporting** — PDF export
-- [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
-      Cloud Run
+- [ ] **Production deployment** — CI/CD, k6 load testing, Cloud Run
 
-Private repositories use a GitHub App rather than stored access tokens, so
-credentials expire hourly and are never persisted.
+Deliberately deferred: CI for SentinelOps itself (its own scanner correctly
+flags this), Redis caching of scan status, PgBouncer, and metrics — the last
+being the other finding it reports about itself.
 
 ## Stack
 
-**Frontend** — React, TypeScript, Vite, Tailwind, shadcn/ui, TanStack Query,
-Recharts, Vitest
+| Layer | Choices |
+|---|---|
+| **Frontend** | React, TypeScript, Vite, Tailwind, shadcn/ui, TanStack Query, Recharts, Vitest |
+| **Backend** | FastAPI, Pydantic v2, SQLAlchemy 2.0 (async), Alembic, PostgreSQL, Redis + arq, bcrypt, PyJWT, slowapi, pytest |
+| **Infrastructure** | Docker Compose, multi-stage images with separate API and worker targets |
 
-**Backend** — FastAPI, Pydantic, SQLAlchemy 2.0 (async), Alembic, PostgreSQL,
-Redis + arq, bcrypt, PyJWT, slowapi, pytest
-
-**Infrastructure** — Docker Compose, multi-stage images with separate API and
-worker targets
+Notable choices: `bcrypt` directly rather than passlib (unmaintained, breaks
+against bcrypt 4.x), PyJWT rather than python-jose (unmaintained,
+signature-verification CVEs), and async SQLAlchemy end to end because
+retrofitting sync→async later touches every signature.
 
 ## License
 

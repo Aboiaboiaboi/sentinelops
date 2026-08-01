@@ -89,6 +89,15 @@ const DEMO_CATEGORY_SCORES: Record<string, number> = {
 
 const DEMO_SCORE = Object.values(DEMO_CATEGORY_SCORES).reduce((a, b) => a + b, 0);
 
+/**
+ * What the previous scan scored, for the comparison fixture.
+ *
+ * Derived from the same category numbers so the two cannot drift: it is this
+ * scan's categories, with security six points worse, observability two better,
+ * and deployment still reporting six before it began failing.
+ */
+const DEMO_PREVIOUS_SCORE = DEMO_SCORE - 6 + 2 + 6;
+
 interface ScanRecord {
   id: string;
   project_id: string;
@@ -325,14 +334,23 @@ export const store = {
         ? {
             previous_scan_id: 'scan_previous',
             previous_created_at: new Date(Date.now() - 86_400_000).toISOString(),
-            previous_score: 52,
+            previous_score: DEMO_PREVIOUS_SCORE,
             comparable: true,
             reason: null,
-            score_delta: DEMO_SCORE - 52,
+            score_delta: DEMO_SCORE - DEMO_PREVIOUS_SCORE,
+            // Every entry agrees with DEMO_CATEGORY_SCORES above. The version
+            // before this claimed scalability was "no longer assessed" while
+            // the chart on the same page showed it scoring 3/10 — a demo that
+            // contradicts itself reads as a broken product.
+            //
+            // Deployment is the honest "no longer assessed" case, because it
+            // really is absent from the current scores: it failed. That also
+            // makes the total go *down* while two categories improved, which
+            // is exactly the nuance worth demonstrating.
             categories: [
               { category: 'security', previous: 8, current: 14, delta: 6 },
               { category: 'observability', previous: 10, current: 8, delta: -2 },
-              { category: 'scalability', previous: 3, current: null, delta: null },
+              { category: 'deployment', previous: 6, current: null, delta: null },
             ],
             checks: [
               {
