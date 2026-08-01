@@ -13,7 +13,7 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Text, cast, func, select, update
@@ -117,6 +117,25 @@ async def list_scans(
         select(Scan).where(Scan.project_id == project.id).order_by(Scan.created_at.desc())
     )
     return result.all()
+
+
+async def rename_scan(
+    db: AsyncSession, *, owner: User, scan_id: uuid.UUID, name: str | None
+) -> Scan | None:
+    """Label a scan, or clear the label. None if it is not the caller's.
+
+    The only mutable field on a scan. Everything else — timestamps, score,
+    findings — is what the scan *is*, and a record that could be edited would
+    not be evidence of anything.
+    """
+    scan = await get_scan(db, owner=owner, scan_id=scan_id)
+    if scan is None:
+        return None
+
+    cleaned = (name or "").strip()
+    scan.name = cleaned or None
+    await db.commit()
+    return scan
 
 
 async def get_previous_completed_scan(db: AsyncSession, *, scan: Scan) -> Scan | None:
@@ -297,6 +316,7 @@ async def complete_scan(
             scoring_version=scoring_version,
             category_scores=dict(category_scores or {}),
             check_results=[dict(result) for result in (check_results or ())],
+            completed_at=datetime.now(UTC),
         )
     )
     await db.commit()
@@ -377,6 +397,9 @@ async def fail_scan(
             error_category=category,
             error_detail=detail,
             category_status=settled,
+            # A failed scan stopped too, and a null here would make it look
+            # like it is still running in the history list.
+            completed_at=datetime.now(UTC),
         )
     )
     await db.commit()

@@ -9,6 +9,11 @@ export function startScan(projectId: string): Promise<ScanSummary> {
   return request<ScanSummary>(`/projects/${projectId}/scans`, { method: 'POST' });
 }
 
+/** The name is the only mutable field — results and timestamps are evidence. */
+export function renameScan(scanId: string, name: string | null): Promise<ScanSummary> {
+  return request<ScanSummary>(`/scans/${scanId}`, { method: 'PATCH', body: { name } });
+}
+
 export function listScans(projectId: string): Promise<ScanSummary[]> {
   return request<ScanSummary[]>(`/projects/${projectId}/scans`);
 }

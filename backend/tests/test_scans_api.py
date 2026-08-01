@@ -41,6 +41,7 @@ class TestCreateScan:
         assert set(body) == {
             "id",
             "project_id",
+            "name",
             "status",
             "score",
             "scoring_version",
@@ -55,6 +56,7 @@ class TestCreateScan:
             "commit_author",
             "committed_at",
             "created_at",
+            "completed_at",
         }
 
     async def test_commit_context_is_null_not_missing(

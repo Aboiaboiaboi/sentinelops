@@ -41,6 +41,7 @@ class TestCreate:
             "repository_url",
             "framework",
             "created_at",
+            "repository_url_editable",
         }
 
     async def test_framework_is_null_not_missing(self, authed_client: AsyncClient) -> None:

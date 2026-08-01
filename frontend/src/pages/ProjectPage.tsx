@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { ProjectSettings } from '@/components/ProjectSettings';
 import { ScanStatusBadge } from '@/components/ScanStatusBadge';
 import { useProject } from '@/hooks/useProjects';
 import { useProjectScans, useStartScan } from '@/hooks/useScan';
@@ -37,9 +38,12 @@ export default function ProjectPage() {
           </p>
         </div>
 
-        <Button onClick={handleStartScan} disabled={startScan.isPending}>
-          <Play /> {startScan.isPending ? 'Starting…' : 'Run scan'}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {project.data && <ProjectSettings project={project.data} />}
+          <Button onClick={handleStartScan} disabled={startScan.isPending}>
+            <Play /> {startScan.isPending ? 'Starting…' : 'Run scan'}
+          </Button>
+        </div>
       </div>
 
       {startScan.isError && (

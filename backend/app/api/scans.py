@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.models import Scan
-from app.schemas.scan import ScanRead
+from app.schemas.scan import ScanRead, ScanUpdate
 from app.services import scan_service
 
 # No prefix: these routes live under both /projects and /scans, so each declares
@@ -42,6 +42,22 @@ async def get_scan(scan_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Scan
     """Polled every few seconds while a scan is in flight, so it stays a single
     indexed lookup and loads no findings."""
     scan = await scan_service.get_scan(db, owner=user, scan_id=scan_id)
+    if scan is None:
+        raise _not_found("Scan")
+    return scan
+
+
+@router.patch("/scans/{scan_id}", response_model=ScanRead)
+async def rename_scan(
+    scan_id: uuid.UUID, data: ScanUpdate, user: CurrentUser, db: DbSession
+) -> Scan:
+    """Give a scan a name, or clear it.
+
+    The name is the only mutable field. Timestamps and results describe what
+    happened, and a scan whose record could be rewritten would be worth
+    nothing as history.
+    """
+    scan = await scan_service.rename_scan(db, owner=user, scan_id=scan_id, name=data.name)
     if scan is None:
         raise _not_found("Scan")
     return scan

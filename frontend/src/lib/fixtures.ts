@@ -15,7 +15,7 @@ import { ApiError } from '@/api/client';
 import type { CheckResult, ScanComparison } from '@/types/check';
 import type { Finding } from '@/types/finding';
 import type { GitHubInstallation, GitHubRepository } from '@/types/github';
-import type { CreateProjectInput, Project } from '@/types/project';
+import type { CreateProjectInput, Project, UpdateProjectInput } from '@/types/project';
 import type { CategoryStatusMap, ScanSummary } from '@/types/scan';
 
 export const USE_FIXTURES = import.meta.env.VITE_USE_FIXTURES === 'true';
@@ -95,6 +95,8 @@ interface ScanRecord {
   created_at: string;
   /** Epoch ms the scan began. `0` means "long finished" — the seeded scan. */
   startedAt: number;
+  /** The user-supplied label, mutable in the demo as it is in the real thing. */
+  name?: string | null;
 }
 
 let nextId = 1;
@@ -107,6 +109,9 @@ const projects: Project[] = [
     name: 'sentinelops-api',
     repository_url: 'https://github.com/acme/sentinelops-api',
     framework: 'FastAPI',
+    // Has a completed scan below, so its URL is frozen — the demo shows the
+    // locked state, which is the one worth seeing.
+    repository_url_editable: false,
     created_at: new Date(Date.now() - 86_400_000 * 9).toISOString(),
   },
   {
@@ -115,6 +120,7 @@ const projects: Project[] = [
     name: 'acme-storefront',
     repository_url: 'https://github.com/acme/acme-storefront',
     framework: 'Next.js',
+    repository_url_editable: true,
     created_at: new Date(Date.now() - 86_400_000 * 2).toISOString(),
   },
 ];
@@ -136,7 +142,18 @@ const scans: ScanRecord[] = [
  */
 function toSummary(record: ScanRecord): ScanSummary {
   const elapsed = record.startedAt === 0 ? Infinity : Date.now() - record.startedAt;
-  const base = { id: record.id, project_id: record.project_id, created_at: record.created_at };
+  const base = {
+    id: record.id,
+    project_id: record.project_id,
+    name: record.name ?? null,
+    created_at: record.created_at,
+    // Set once the simulated scan has run its course, mirroring the worker
+    // writing it on every terminal transition.
+    completed_at:
+      record.startedAt === 0 || Date.now() - record.startedAt >= SIMULATED_SCAN_MS
+        ? record.created_at
+        : null,
+  };
 
   // Only known once the checkout exists, so a scan still running reports none —
   // same as the real worker, which writes it after the clone.
@@ -224,10 +241,31 @@ export const store = {
       name: input.name,
       repository_url: input.repository_url,
       framework: null,
+      // Nothing has scanned it yet.
+      repository_url_editable: true,
       created_at: new Date().toISOString(),
     };
     projects.unshift(created);
     return delay(created);
+  },
+
+  updateProject(projectId: string, input: UpdateProjectInput) {
+    const project = requireProject(projectId);
+    if (input.repository_url !== undefined && input.repository_url !== project.repository_url) {
+      // Mirrors the API: the demo projects already have scans, so their URL is
+      // frozen and the fixture must refuse it the same way rather than letting
+      // the demo do something the real thing forbids.
+      if (!project.repository_url_editable) {
+        throw new ApiError(
+          409,
+          'This project has a completed scan, so its repository URL is fixed.',
+        );
+      }
+      project.repository_url = input.repository_url;
+      project.framework = null;
+    }
+    if (input.name !== undefined) project.name = input.name;
+    return delay(project);
   },
 
   deleteProject(projectId: string) {
@@ -254,6 +292,13 @@ export const store = {
   getScan(scanId: string) {
     const record = scans.find((s) => s.id === scanId);
     if (!record) throw new ApiError(404, 'Scan not found');
+    return delay(toSummary(record));
+  },
+
+  renameScan(scanId: string, name: string | null) {
+    const record = scans.find((s) => s.id === scanId);
+    if (!record) throw new ApiError(404, 'Scan not found');
+    record.name = (name ?? '').trim() || null;
     return delay(toSummary(record));
   },
 

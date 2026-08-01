@@ -147,6 +147,21 @@ class Scan(Base):
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
 
+    # A label the user can give a scan — "before the refactor". Null by
+    # default, and the UI falls back to the timestamp, so naming is optional
+    # rather than another empty field to fill in.
+    name: Mapped[str | None] = mapped_column(String(120), default=None)
+
+    # When the scan stopped, whether it succeeded or failed. Set on every
+    # terminal transition rather than only on success: "how long did this take"
+    # and "when did this stop trying" are the same question to somebody reading
+    # scan history, and a failed scan that never records one looks like it is
+    # still running.
+    #
+    # System-generated on both sides — created_at and this are never editable,
+    # which is what keeps history trustworthy while names are free to change.
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
     # Every check the scanners performed, with its outcome. A list of
     # {id, category, title, outcome, reason} maps.
     #

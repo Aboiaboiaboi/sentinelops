@@ -40,6 +40,8 @@ export interface CategoryScore {
 export interface ScanSummary {
   id: string;
   project_id: string;
+  /** A label the user gave this scan. Null falls back to the timestamp. */
+  name: string | null;
   status: ScanStatus;
   /** Null until the scan completes. */
   score: number | null;
@@ -79,6 +81,8 @@ export interface ScanSummary {
   commit_author: string | null;
   committed_at: string | null;
   created_at: string;
+  /** When the scan stopped, succeeded or failed. Null while it is running. */
+  completed_at: string | null;
 }
 
 /** A scan's terminal states — polling stops here. */

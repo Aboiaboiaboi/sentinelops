@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createProject, deleteProject, getProject, listProjects } from '@/api/projects';
+import {
+  createProject,
+  deleteProject,
+  getProject,
+  listProjects,
+  updateProject,
+} from '@/api/projects';
 import { USE_FIXTURES, store } from '@/lib/fixtures';
-import type { CreateProjectInput } from '@/types/project';
+import type { CreateProjectInput, UpdateProjectInput } from '@/types/project';
 
 export const projectKeys = {
   all: ['projects'] as const,
@@ -31,6 +37,20 @@ export function useCreateProject() {
     mutationFn: (input: CreateProjectInput) =>
       USE_FIXTURES ? store.createProject(input) : createProject(input),
     onSuccess: () => client.invalidateQueries({ queryKey: projectKeys.all }),
+  });
+}
+
+export function useUpdateProject(projectId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateProjectInput) =>
+      USE_FIXTURES ? store.updateProject(projectId, input) : updateProject(projectId, input),
+    onSuccess: () => {
+      // Both: the detail page shows the project, and the dashboard list shows
+      // its name.
+      client.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
+      client.invalidateQueries({ queryKey: projectKeys.all });
+    },
   });
 }
 

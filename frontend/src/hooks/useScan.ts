@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getScan, listScans, startScan } from '@/api/scans';
+import { getScan, listScans, renameScan, startScan } from '@/api/scans';
 import { USE_FIXTURES, store } from '@/lib/fixtures';
 import { isScanFinished, type ScanSummary } from '@/types/scan';
 import { projectKeys } from './useProjects';
@@ -53,6 +53,25 @@ export function useStartScan(projectId: string | undefined) {
         client.invalidateQueries({ queryKey: scanKeys.forProject(projectId) });
         client.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
       }
+    },
+  });
+}
+
+/**
+ * Names a scan, or clears the name.
+ *
+ * Writes the result straight into the detail cache rather than invalidating:
+ * a rename is a small, known change, and re-fetching a scan the user is
+ * looking at would flash a loading state for no new information.
+ */
+export function useRenameScan(scanId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string | null) =>
+      USE_FIXTURES ? store.renameScan(scanId, name) : renameScan(scanId, name),
+    onSuccess: (scan: ScanSummary) => {
+      client.setQueryData(scanKeys.detail(scanId), scan);
+      client.invalidateQueries({ queryKey: scanKeys.forProject(scan.project_id) });
     },
   });
 }

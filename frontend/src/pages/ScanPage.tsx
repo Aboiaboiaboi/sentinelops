@@ -9,6 +9,7 @@ import { CommitContext } from '@/components/CommitContext';
 import { ScanChecks } from '@/components/ScanChecks';
 import { ScanComparison } from '@/components/ScanComparison';
 import { ScanFailure } from '@/components/ScanFailure';
+import { ScanName } from '@/components/ScanName';
 import { FindingsList } from '@/components/FindingsList';
 import { ScanStatusBadge } from '@/components/ScanStatusBadge';
 import { ScoreGauge } from '@/components/ScoreGauge';
@@ -92,7 +93,7 @@ export default function ScanPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Scan results</h1>
+          <ScanName scan={scan} />
           <p className="text-sm text-muted-foreground">
             {new Date(scan.created_at).toLocaleString()}
             {scan.scoring_version && ` · scoring ${scan.scoring_version}`}

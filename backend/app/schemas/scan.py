@@ -1,6 +1,6 @@
 import uuid
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.models.scan import SCAN_ERROR_HINTS, CategoryStatus, ScanStatus
 from app.scanners.base import CheckOutcome
@@ -65,6 +65,16 @@ class ScanComparisonRead(BaseModel):
     checks: list[CheckChangeRead]
 
 
+class ScanUpdate(BaseModel):
+    """Body of PATCH /scans/{id}.
+
+    Only the name. Timestamps and results are system-generated, and a scan
+    whose record could be edited would not be evidence of anything.
+    """
+
+    name: str | None = Field(default=None, max_length=120)
+
+
 class ScanRead(BaseModel):
     """Shape of GET /scans/{id} — the endpoint the client polls.
 
@@ -77,6 +87,9 @@ class ScanRead(BaseModel):
 
     id: uuid.UUID
     project_id: uuid.UUID
+    #: A label the user gave this scan, or null — the client falls back to the
+    #: timestamp, so naming stays optional.
+    name: str | None
     status: ScanStatus
     score: int | None
     scoring_version: str | None
@@ -106,6 +119,9 @@ class ScanRead(BaseModel):
     committed_at: UtcDatetime | None
 
     created_at: UtcDatetime
+    #: When the scan stopped, succeeded or failed. Null while it is still
+    #: running, and for scans that predate the field.
+    completed_at: UtcDatetime | None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
