@@ -12,6 +12,8 @@ is no daemon to run it against.
 
 import functools
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -298,6 +300,104 @@ def test_no_cache_volume_means_no_cache_mount(run: RecordingRun, tmp_path: Path)
     DockerSandbox().run(SPEC, repo_path=tmp_path)
 
     assert not any(CACHE_MOUNT in mount for mount in _mounts(run.command))
+
+
+# ---------------------------------------------------------------------------
+# How many containers may exist at once
+#
+# --memory bounds what one container uses; nothing bounds how many there are.
+# The real count is max_jobs (arq) x tools per scanner (the security scanner) —
+# two numbers in two files, whose product nobody computes until the host runs
+# out of memory and its OOM killer picks a victim by heuristic, which is as
+# likely to be Postgres as the container that caused it.
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_permitted_number_of_containers_run_at_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The N+1th caller waits for a slot rather than starting a container."""
+    started = threading.Semaphore(0)
+    release = threading.Event()
+    live = 0
+    peak = 0
+    guard = threading.Lock()
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        nonlocal live, peak
+        with guard:
+            live += 1
+            peak = max(peak, live)
+        started.release()
+        release.wait(timeout=10)
+        with guard:
+            live -= 1
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    sandbox = DockerSandbox(max_concurrent=2)
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [pool.submit(sandbox.run, SPEC, repo_path=tmp_path) for _ in range(5)]
+        # Let the permitted two get in, then confirm no third followed them.
+        assert started.acquire(timeout=5)
+        assert started.acquire(timeout=5)
+        assert not started.acquire(timeout=0.5), "a third container started past the limit"
+        release.set()
+        for future in futures:
+            future.result(timeout=10)
+
+    assert peak == 2, f"{peak} containers ran at once against a limit of 2"
+
+
+def test_every_caller_still_gets_its_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The limit queues work; it does not drop it."""
+    calls = RecordingRun()
+    monkeypatch.setattr(subprocess, "run", calls)
+    sandbox = DockerSandbox(max_concurrent=1)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = [
+            future.result(timeout=10)
+            for future in [pool.submit(sandbox.run, SPEC, repo_path=tmp_path) for _ in range(4)]
+        ]
+
+    assert len(calls.calls) == 4
+    assert all(result.exit_code == 0 for result in results)
+
+
+def test_a_saturated_worker_reports_no_sandbox_rather_than_waiting_forever(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unbounded wait would push the scan past arq's job_timeout, get it
+    cancelled mid-write and retried — adding load exactly when there is already
+    too much. SandboxUnavailable becomes an errored check, which is honest."""
+    monkeypatch.setattr(subprocess, "run", RecordingRun())
+    sandbox = DockerSandbox(max_concurrent=1, max_timeout_seconds=0)
+    sandbox._slots.acquire()  # the only slot, taken by someone else
+
+    with pytest.raises(SandboxUnavailable, match="saturated"):
+        sandbox.run(SPEC, repo_path=tmp_path)
+
+
+def test_a_slot_is_released_when_a_run_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A slot leaked on the error path exhausts the limit one failure at a time,
+    and the worker stops running tools entirely until it restarts."""
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        raise OSError("no docker binary")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    sandbox = DockerSandbox(max_concurrent=1)
+
+    for _ in range(3):
+        with pytest.raises(SandboxUnavailable):
+            sandbox.run(SPEC, repo_path=tmp_path)
+
+    # BoundedSemaphore would have raised on an over-release before reaching here.
+    assert sandbox._slots.acquire(blocking=False), "the slot was never given back"
 
 
 # ---------------------------------------------------------------------------

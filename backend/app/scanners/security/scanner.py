@@ -18,7 +18,10 @@ README is missing" is not, and the second false alarm is when they stop
 believing the tool. Every check here prefers silence to a guess.
 """
 
+import logging
 import re
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from app.scanners.base import (
@@ -28,12 +31,15 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     code_only,
+    errored,
     failed,
     is_test_file,
     passed,
     skipped,
 )
 from app.scanners.security.tools import gitleaks, semgrep, trivy
+
+logger = logging.getLogger(__name__)
 
 CATEGORY = "security"
 
@@ -253,6 +259,18 @@ def _is_compose_file(path: Path) -> bool:
     }
 
 
+# --- Tool-backed checks -----------------------------------------------------
+#
+# The three checks that leave the process, each one a container run. Declared as
+# data so the dispatch below neither knows nor cares how many there are: adding
+# a fourth tool means adding a line here.
+_TOOL_CHECKS: tuple[tuple[CheckSpec, Callable[[CheckSpec, RepositoryIndex], CheckResult]], ...] = (
+    (_HARDCODED, gitleaks.scan_for_secrets),
+    (_DEPENDENCIES, trivy.scan_dependencies),
+    (_CODE_PATTERNS, semgrep.scan_code_patterns),
+)
+
+
 class SecurityScanner:
     category = CATEGORY
     CHECKS = (
@@ -267,6 +285,51 @@ class SecurityScanner:
     )
 
     def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
+        # The containers are started first and collected last, so the reading
+        # below happens while they run rather than after them. Three tools that
+        # each spend most of their time waiting on a subprocess are the textbook
+        # case for threads: the GIL is released for the whole wait, and the
+        # Scanner protocol stays synchronous, which is what lets the worker keep
+        # dispatching a scanner with a single asyncio.to_thread.
+        with ThreadPoolExecutor(
+            max_workers=len(_TOOL_CHECKS), thread_name_prefix="security-tool"
+        ) as pool:
+            running = [(check, pool.submit(run, check, repo)) for check, run in _TOOL_CHECKS]
+            local_results = self._scan_locally(repo)
+            tool_results = [self._collect(check, future) for check, future in running]
+
+        secrets, dependencies, patterns = tool_results
+        credential_files, debug, tls, container, gitignore = local_results
+        return [
+            credential_files,
+            secrets,
+            dependencies,
+            patterns,
+            debug,
+            tls,
+            container,
+            gitignore,
+        ]
+
+    @staticmethod
+    def _collect(check: CheckSpec, future: "Future[CheckResult]") -> CheckResult:
+        """One tool's result, or an errored check if it raised.
+
+        Every anticipated failure is already an errored result by the time it
+        gets here — the tool modules convert timeouts, bad exits and unreadable
+        reports themselves. This catches the unanticipated, and exists so that
+        one tool raising does not cost the category its other seven checks:
+        without it the exception leaves `scan`, and the worker marks the whole
+        of security FAILED including the five checks that answered fine.
+        """
+        try:
+            return future.result()
+        except Exception:
+            logger.exception("security tool raised", extra={"check": check.id})
+            return errored(check, "the check could not be completed")
+
+    def _scan_locally(self, repo: RepositoryIndex) -> tuple[CheckResult, ...]:
+        """The five checks that are reading rather than tooling."""
         credential_files: list[str] = []
         debug_files: list[str] = []
         tls_files: list[str] = []
@@ -297,19 +360,13 @@ class SecurityScanner:
                 tls_files.append(repo.relative(path))
 
         has_source = bool(repo.production_files)
-        return [
+        return (
             self._check_credential_files(credential_files),
-            # The only check here that leaves the process. It runs a container,
-            # so it is the slowest thing in this scanner by a wide margin — and
-            # it is why scanners are dispatched off the event loop.
-            gitleaks.scan_for_secrets(_HARDCODED, repo),
-            trivy.scan_dependencies(_DEPENDENCIES, repo),
-            semgrep.scan_code_patterns(_CODE_PATTERNS, repo),
             self._check_debug(has_source, debug_files),
             self._check_tls(has_source, tls_files),
             self._check_container_config(container_configs, container_files),
             self._check_gitignore(repo),
-        ]
+        )
 
     # --- detection ---------------------------------------------------------
 

@@ -71,6 +71,27 @@ def test_a_referenced_volume_carries_the_project_prefix(variable: str) -> None:
     assert _referenced_volumes()[variable].startswith("sentinelops_")
 
 
+def test_the_worker_bounds_how_many_containers_it_may_run() -> None:
+    """Without this the ceiling is arq's max_jobs times the tools a scanner runs
+    at once — a product of two numbers in two files that neither one states, and
+    at 512 MB a container it exceeds a default Docker VM."""
+    match = re.search(r"^\s+SANDBOX_MAX_CONCURRENT:\s*\"?(\d+)\"?\s*$", _text(), re.MULTILINE)
+
+    assert match, "the worker does not bound its concurrent containers"
+    assert int(match.group(1)) >= 1
+
+
+def test_the_declared_ceiling_fits_a_developer_machine() -> None:
+    """The number worth knowing is the product, and nothing computes it until
+    something is killed for exceeding it. 4 GB is a Docker Desktop default."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    peak_mb = settings.sandbox_max_concurrent * settings.sandbox_memory_mb
+
+    assert peak_mb <= 4096, f"a saturated worker would want {peak_mb} MB of containers"
+
+
 def test_every_image_is_pinned() -> None:
     """Same rule SandboxSpec enforces in code, applied to the tool images that
     are launched by compose rather than by the sandbox."""

@@ -324,7 +324,7 @@ never readable from JavaScript.
 ### Running the checks
 
 ```bash
-# Backend — 938 tests. Needs Postgres running. The sandbox integration tests
+# Backend — 948 tests. Needs Postgres running. The sandbox integration tests
 # skip themselves when no Docker daemon is reachable.
 cd backend
 uv run pytest
@@ -427,6 +427,32 @@ checks with `repo.is_service`; and return a result for **every** declared
 check — a shared test asserts it against several repositories, so a check you
 forget to run fails the suite rather than silently reporting as passed.
 
+The three tool-backed checks run **concurrently**, so the security category
+costs the slowest container rather than the sum of three. They are dispatched
+through a `ThreadPoolExecutor` inside the scanner, which keeps the `Scanner`
+protocol synchronous — a subprocess wait releases the GIL, so threads are the
+right tool and the worker still dispatches a scanner with one `to_thread`.
+
+Concurrency has a ceiling, and it is deliberate. `--memory` bounds what one
+container may use; nothing bounds how many exist, and the real count is arq's
+`max_jobs` multiplied by the tools a scanner runs at once — five scans of three
+tools is fifteen containers, which at 512 MB apiece is 7.5 GB and more than a
+default Docker Desktop VM has. `SANDBOX_MAX_CONCURRENT` bounds the containers
+directly, so adding a fourth tool changes queueing rather than the memory
+ceiling.
+
+Its value came from measuring rather than from halving the alarming number.
+Peak usage is Semgrep 271 MiB, Gitleaks 58 MiB, Trivy 39 MiB — a fraction of
+what the limits allow, and a limit is not a reservation. Six is two scans' worth
+of tools, and the queueing it causes is cheap: on a 2,531-file repository the
+three tools cost about 34 container-seconds together, so waits are tens of
+seconds against a 300s ceiling. Waiting is still *bounded*, because waiting
+indefinitely would push a scan past `job_timeout`, get it cancelled mid-write
+and retried — adding load exactly when there is already too much.
+
+Measured on that repository, the security category went from **33.5s to 22.9s**,
+which is the sum of three tools becoming the slowest of them.
+
 ---
 
 ## How it works
@@ -501,7 +527,9 @@ The security tools go further, because they are the only thing here that
 *executes* third-party binaries against a stranger's code. Each runs in its own
 container with **no network at all**, a read-only root filesystem, every Linux
 capability dropped, `no-new-privileges`, bounded memory, CPU and process count,
-as uid 65534, with the checkout mounted read-only. Its vulnerability database
+as uid 65534, with the checkout mounted read-only. How many may run at once is
+bounded too, so a busy worker queues rather than handing the host's OOM killer
+a choice between Postgres and a scan. Its vulnerability database
 arrives through a cache volume it can only read, because it has no way to fetch
 one. Images are pinned by tag — an unpinned tool could change under a scan and
 make a score change unexplainable — and the sandbox refuses to run at all rather
@@ -522,11 +550,11 @@ endpoints are rate limited.
 - [x] **Explainability** — commit context on each scan, real reasons when one
       fails, which checks passed rather than only what broke, scan-to-scan
       comparison, and editing that preserves history
-- [ ] **Security tooling** — real tools instead of regexes, each in its own
-      sandbox behind a `SandboxRunner` boundary. **Gitleaks, Trivy and Semgrep
-      are all in**; what remains is running the three concurrently, so the
-      category costs the slowest tool rather than the sum of them. OSV was
-      dropped as a duplicate of Trivy
+- [x] **Security tooling** — real tools instead of regexes, each in its own
+      sandbox behind a `SandboxRunner` boundary. Gitleaks, Trivy and Semgrep,
+      run concurrently under a bounded container limit, so the category costs
+      the slowest tool rather than the sum of them. OSV was dropped as a
+      duplicate of Trivy
 - [ ] **Reporting** — PDF export
 - [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
       Cloud Run

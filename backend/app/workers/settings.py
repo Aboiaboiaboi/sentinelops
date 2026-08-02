@@ -45,6 +45,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
         cache_volume=settings.sandbox_cache_volume,
         max_timeout_seconds=settings.sandbox_timeout_seconds,
         max_memory_mb=settings.sandbox_memory_mb,
+        max_concurrent=settings.sandbox_max_concurrent,
     )
     # Checked once at startup rather than per scan. A misconfigured volume is
     # otherwise discovered as a tool that mysteriously finds nothing, which is
@@ -64,7 +65,19 @@ async def on_startup(ctx: dict[str, Any]) -> None:
         )
 
     set_sandbox(sandbox)
-    logger.info("sandbox ready", extra={"volume": settings.sandbox_volume or "(bind mount)"})
+    logger.info(
+        "sandbox ready",
+        extra={
+            "volume": settings.sandbox_volume or "(bind mount)",
+            # Logged together because they are the memory ceiling for this
+            # worker, and they are set in two different files. Their product is
+            # the number worth knowing, and it is the number nobody computes
+            # until something is killed for being over it.
+            "max_concurrent": settings.sandbox_max_concurrent,
+            "memory_mb": settings.sandbox_memory_mb,
+            "peak_memory_mb": settings.sandbox_max_concurrent * settings.sandbox_memory_mb,
+        },
+    )
 
 
 class WorkerSettings:

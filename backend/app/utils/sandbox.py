@@ -21,7 +21,10 @@ import logging
 import os
 import shlex
 import subprocess
+import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -242,6 +245,7 @@ class DockerSandbox:
         docker_binary: str = "docker",
         max_timeout_seconds: int = 300,
         max_memory_mb: int = 512,
+        max_concurrent: int = 6,
     ) -> None:
         self._volume = volume
         self._cache_volume = cache_volume
@@ -250,6 +254,13 @@ class DockerSandbox:
         # machine, and the smaller of the two wins.
         self._max_timeout_seconds = max_timeout_seconds
         self._max_memory_mb = max_memory_mb
+        # How many containers this process may have running at once, across
+        # every scan it is handling. Bounded here rather than left to emerge
+        # from max_jobs × tools-per-scanner — see _slot. BoundedSemaphore, not
+        # Semaphore: a release without a matching acquire is a bug that would
+        # otherwise silently raise the ceiling for the life of the process.
+        self._max_concurrent = max_concurrent
+        self._slots = threading.BoundedSemaphore(max_concurrent)
         # Matches CLONE_ROOT=/data/repos in the worker stage of the Dockerfile.
         # The two have to agree: this is the path the volume is mounted at in
         # the worker, and therefore the path the clone is already reachable by.
@@ -379,8 +390,46 @@ class DockerSandbox:
         command = self._build_command(spec, repo_path, name)
         timeout = self._timeout_for(spec)
 
-        logger.info("sandbox starting", extra={"image": spec.image, "timeout_seconds": timeout})
+        with self._slot(spec):
+            logger.info("sandbox starting", extra={"image": spec.image, "timeout_seconds": timeout})
+            return self._execute(spec, command, name, timeout, repo_path)
 
+    @contextmanager
+    def _slot(self, spec: SandboxSpec) -> Iterator[None]:
+        """Hold one of this process's container slots for the duration of a run.
+
+        The limit that actually protects the host. `--memory` caps what one
+        container may use; nothing caps how many exist, and the count is the
+        product of two numbers set in different files — arq's `max_jobs` and the
+        number of tools a scanner runs at once. Bounding containers directly
+        means adding a fourth tool changes queueing rather than the memory
+        ceiling, which is the property worth having.
+
+        Waiting is bounded rather than indefinite. A slot is held for at most
+        one tool timeout, so a wait longer than that means the queue is deeper
+        than this worker can drain — and an errored check says so honestly,
+        where an unbounded wait would push the whole scan past arq's
+        `job_timeout`, get it cancelled mid-write, and have it retried, which
+        adds load precisely when there is already too much.
+        """
+        if not self._slots.acquire(timeout=self._max_timeout_seconds):
+            logger.warning("sandbox slots exhausted", extra={"image": spec.image})
+            raise SandboxUnavailable(
+                f"no sandbox slot became available for {spec.image}; the worker is saturated"
+            )
+        try:
+            yield
+        finally:
+            self._slots.release()
+
+    def _execute(
+        self,
+        spec: SandboxSpec,
+        command: list[str],
+        name: str,
+        timeout: int,
+        repo_path: Path,
+    ) -> SandboxResult:
         try:
             result = subprocess.run(  # noqa: S603 — fixed argv, no shell
                 command,

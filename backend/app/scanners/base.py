@@ -19,6 +19,7 @@ concurrent logins. The worker dispatches them with asyncio.to_thread.
 import enum
 import os
 import re
+import threading
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -473,6 +474,13 @@ class RepositoryIndex:
 
     _cache: dict[Path, str] = field(default_factory=dict, repr=False)
     _cached_bytes: int = field(default=0, repr=False)
+    # One index is now shared by threads: the security scanner runs its three
+    # tools concurrently and every one of them is handed this object. The dict
+    # itself is fine under the GIL, but `_cached_bytes += len(content)` is a
+    # read-modify-write, and two threads interleaving there lose an update and
+    # let the cache grow past its budget. compare=False because a lock is not
+    # part of what makes two indexes equal, and it is unpicklable besides.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     @classmethod
     def build(cls, repo_path: Path, *, framework: str | None = None) -> "RepositoryIndex":
@@ -507,15 +515,23 @@ class RepositoryIndex:
         )
 
     def read(self, path: Path, *, max_bytes: int = MAX_READ_BYTES) -> str:
-        """Read a file, remembering the result within the byte budget."""
+        """Read a file, remembering the result within the byte budget.
+
+        Safe to call from several threads. The read itself is deliberately
+        outside the lock: it is the slow part, the tree cannot change during a
+        scan, and holding a lock across file I/O would serialise the readers
+        this exists to speed up. Two threads racing the same new path both read
+        it and agree on the answer — wasteful once, never wrong.
+        """
         cached = self._cache.get(path)
         if cached is not None:
             return cached
 
         content = read_text(path, max_bytes=max_bytes)
-        if self._cached_bytes + len(content) <= MAX_CACHED_BYTES:
-            self._cache[path] = content
-            self._cached_bytes += len(content)
+        with self._lock:
+            if path not in self._cache and self._cached_bytes + len(content) <= MAX_CACHED_BYTES:
+                self._cache[path] = content
+                self._cached_bytes += len(content)
         return content
 
     @property

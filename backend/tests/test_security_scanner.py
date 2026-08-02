@@ -10,12 +10,15 @@ tooling, and for the scanner itself, whose placeholder guard would otherwise
 rightly reject values spelling EXAMPLE or xxx into themselves.
 """
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from app.scanners.base import CheckOutcome, RepositoryIndex, Severity, findings_of
 from app.scanners.security import SecurityScanner
+from app.utils.sandbox import NullSandbox, SandboxResult, SandboxSpec, set_sandbox
 
 SCANNER = SecurityScanner()
 
@@ -203,6 +206,91 @@ class TestToolBackedChecks:
         assert result.outcome is CheckOutcome.ERRORED
         assert result.finding is None
         assert result.reason
+
+
+class TestToolsRunConcurrently:
+    """The three tool checks are three container runs. Run one after another the
+    category costs their sum; run together it costs the slowest. These assert the
+    overlap is real, and that concurrency did not cost the guarantees the
+    sequential version had."""
+
+    def test_the_three_tools_overlap(self, tmp_path: Path) -> None:
+        """Measured by holding each tool inside the sandbox until all three have
+        arrived. Sequential execution deadlocks on the barrier and the timeout
+        fires; only genuine overlap gets all three through."""
+        _write(tmp_path, "app.py", "x = 1\n")
+        barrier = threading.Barrier(3, timeout=10)
+        arrived: list[str] = []
+
+        class BarrierSandbox:
+            def run(self, spec: SandboxSpec, *, repo_path: Path) -> SandboxResult:
+                # Sequential execution never gets past the first of these: the
+                # barrier waits for three parties that cannot arrive, times out,
+                # and raises. Asserting on `arrived` rather than on the results
+                # is deliberate — every failure here is converted to an errored
+                # check, so a result-shaped assertion passes either way.
+                barrier.wait()
+                arrived.append(spec.image)
+                return SandboxResult(exit_code=0, stdout="", stderr="", timed_out=False)
+
+        set_sandbox(BarrierSandbox())
+        try:
+            SCANNER.scan(RepositoryIndex.build(tmp_path, framework="FastAPI"))
+        finally:
+            set_sandbox(NullSandbox())
+
+        assert len(arrived) == 3, "the tools did not run at the same time"
+
+    def test_results_keep_their_declared_order(self, tmp_path: Path) -> None:
+        """Completion order is whichever container finishes first, which is not
+        the order the checks are declared in. The API contract is the declared
+        one, so results are placed rather than appended as they land."""
+        _write(tmp_path, "app.py", "x = 1\n")
+
+        results = SCANNER.scan(RepositoryIndex.build(tmp_path, framework="FastAPI"))
+
+        assert [r.id for r in results] == [c.id for c in SCANNER.CHECKS]
+
+    def test_one_tool_raising_does_not_cost_the_category_its_other_checks(
+        self, tmp_path: Path
+    ) -> None:
+        """Before the pool this exception left `scan` entirely and the worker
+        marked all of security FAILED — including the five checks that had
+        already answered."""
+        _write(tmp_path, "app.py", "x = 1\n")
+
+        class ExplodingSandbox:
+            def run(self, spec: SandboxSpec, *, repo_path: Path) -> SandboxResult:
+                raise RuntimeError("something nobody anticipated")
+
+        set_sandbox(ExplodingSandbox())
+        try:
+            results = SCANNER.scan(RepositoryIndex.build(tmp_path, framework="FastAPI"))
+        finally:
+            set_sandbox(NullSandbox())
+
+        by_id = {r.id: r for r in results}
+        assert by_id["security.hardcoded_secrets"].outcome is CheckOutcome.ERRORED
+        assert by_id["security.credential_files"].outcome is CheckOutcome.PASSED
+        assert by_id["security.debug_mode"].outcome is CheckOutcome.PASSED
+
+    def test_the_index_survives_being_read_from_several_threads(self, tmp_path: Path) -> None:
+        """The read cache is now shared. Its dict is safe under the GIL, but the
+        cached-byte counter is a read-modify-write, and a lost update there lets
+        the cache grow past the budget it exists to enforce."""
+        for i in range(40):
+            _write(tmp_path, f"module_{i}.py", f"value = {i}\n" * 50)
+        index = RepositoryIndex.build(tmp_path, framework="FastAPI")
+
+        def read_everything() -> list[str]:
+            return [index.read(path) for path in index.files]
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(read_everything) for _ in range(8)]
+            outcomes = [future.result(timeout=30) for future in futures]
+
+        assert all(outcome == outcomes[0] for outcome in outcomes)
+        assert len(outcomes[0]) == len(index.files)
 
 
 class TestDebugMode:

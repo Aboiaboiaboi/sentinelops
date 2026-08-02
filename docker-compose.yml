@@ -204,6 +204,17 @@ services:
       # services; the worker logs a warning at startup if it is missing, since
       # the tools that need it will report errored until it exists.
       SANDBOX_CACHE_VOLUME: sentinelops_sandbox_cache
+      # The worker's container ceiling, made explicit. The security scanner runs
+      # its three tools at once and arq runs up to max_jobs scans at once, so
+      # without this the containers in flight are 5 x 3 = 15 — at 512 MB each
+      # that is 7.5 GB, more than a default Docker Desktop VM has.
+      #
+      # Six is two scans' worth of tools, chosen after measuring rather than by
+      # halving the alarming number. Peaks are Semgrep 271 MiB, Gitleaks 58,
+      # Trivy 39 — a limit is not a reservation, so six slots cost well under a
+      # gigabyte in practice. Scans past that queue for a slot, which is cheap:
+      # the three tools cost ~34 container-seconds on a 2,500-file repository.
+      SANDBOX_MAX_CONCURRENT: "6"
     # No ports. The worker pulls jobs off Redis rather than accepting requests,
     # so it needs no inbound path at all — which is also why Cloud Run Worker
     # Pools exist rather than forcing this shape into a request/response service.
