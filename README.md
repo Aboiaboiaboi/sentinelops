@@ -28,11 +28,11 @@ Here is SentinelOps scanning **itself**, which is the real output of the
 commands below rather than an illustration:
 
 ```
-sentinelops                                        90 / 100    Grade A
+sentinelops                                        89 / 100    Grade A
 6 of 6 categories reported
 29 checks: 22 passed · 4 skipped · 3 failed
 
-  Security         23 / 25   ██████████████████░░
+  Security         22 / 25   ██████████████████░░
   Architecture     20 / 20   ████████████████████
   Reliability      20 / 20   ████████████████████
   Scalability      10 / 10   ████████████████████
@@ -40,15 +40,32 @@ sentinelops                                        90 / 100    Grade A
   Observability     6 / 10   ████████████░░░░░░░░
 ```
 
-The two points Security lost are a real advisory against a version this project
-pins, found by Trivy on the run above — not an illustration:
+The three points Security lost are a real advisory against a version this
+project pins, found by Trivy on the run above — not an illustration:
 
-> **Dependencies have known vulnerabilities** · MEDIUM · −2
-> react-router 6.30.4 is affected by CVE-2026-53666 (medium). React Router:
-> Information disclosure via client-side constructor execution. It is the worst
-> of 3 known vulnerabilities across 2 packages.
+> **Dependencies have known vulnerabilities** · HIGH · −3
+> react-router 7.18.2 is affected by GHSA-qwww-vcr4-c8h2 (high). React Router:
+> RSC Mode CSRF Bypass Allows Action Execution Before 400 Response. These are
+> published, catalogued weaknesses in versions this project pins — which means
+> they are as available to an attacker as they are to you.
 >
-> **Recommendation:** Upgrade react-router to a fixed version, then re-scan.
+> **Recommendation:** Upgrade react-router to 8.3.0 or later, then re-scan. If
+> the upgrade is not straightforward, record why and track it.
+
+That finding got *worse* on purpose, and the story is the honest one. This
+project was on `react-router@6.30.4`, which carried three moderate advisories —
+two of them open redirects in `useNavigate`, which is code this app actually
+uses. Upgrading to `7.18.2` closed all three and introduced one high-severity
+advisory in React Router's **RSC mode**, which needs a server runtime this
+client-only SPA does not have. Clearing it completely means `react-router@8.3.0`,
+which requires React ≥19.2.7 and Node ≥22.22 — a framework upgrade, not a
+dependency bump, and its own piece of work.
+
+So the score went 90 → 89 for a change that reduced real risk. That is the
+scanner being right rather than being flattering: the vulnerable code is
+genuinely installed, and *reachability is a judgement the tool should not quietly
+make on your behalf*. Suppressing the finding was the tempting option and it is
+the one this project exists to argue against.
 
 Each finding tells you what it found and what to do:
 
@@ -330,7 +347,7 @@ cd backend
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 
-# Frontend — 71 tests
+# Frontend — 98 tests
 cd frontend
 npm run typecheck && npm run lint && npm run test && npm run build
 ```
