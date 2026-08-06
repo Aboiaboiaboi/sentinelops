@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLogin } from '@/hooks/useAuth';
+import { safeRedirect } from '@/lib/redirect';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -13,7 +14,10 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const from = (location.state as { from?: string } | null)?.from ?? '/dashboard';
+  // Validated, not trusted. This value started life in the URL bar — see
+  // lib/redirect.ts — so navigating to it verbatim is an open redirect that
+  // fires immediately after a genuine login.
+  const from = safeRedirect((location.state as { from?: unknown } | null)?.from);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();

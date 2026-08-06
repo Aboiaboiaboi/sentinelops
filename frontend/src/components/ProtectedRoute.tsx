@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { subscribeToUnauthorized } from '@/lib/queryClient';
+import { safeRedirect } from '@/lib/redirect';
 
 /**
  * Route guard for cookie-based auth.
@@ -22,7 +23,15 @@ export function ProtectedRoute() {
       subscribeToUnauthorized(() => {
         // `replace` keeps the dead protected URL out of history, and `from`
         // lets the login page send the user back where they were headed.
-        navigate('/login', { replace: true, state: { from: location.pathname } });
+        //
+        // Validated on the way in as well as on the way out. The login page is
+        // the only consumer today and it validates too, but a value that is
+        // never stored unsafely cannot be read unsafely by whatever consumes it
+        // next — and this is the cheaper of the two places to be sure.
+        navigate('/login', {
+          replace: true,
+          state: { from: safeRedirect(location.pathname) },
+        });
       }),
     [navigate, location.pathname],
   );
