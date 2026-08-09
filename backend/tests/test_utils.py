@@ -11,7 +11,15 @@ from pathlib import Path
 import pytest
 
 from app.utils.queue import InMemoryQueue, Queue, get_queue, set_queue
-from app.utils.storage import LocalStorage, Storage, UnsafeStorageKey
+from app.utils.storage import (
+    LocalStorage,
+    NullStorage,
+    Storage,
+    StorageUnavailable,
+    UnsafeStorageKey,
+    get_storage,
+    set_storage,
+)
 
 
 class TestInMemoryQueue:
@@ -135,5 +143,66 @@ class TestLocalStorage:
 
         assert Path(location).read_bytes() == b"data"
 
+    async def test_download_returns_what_was_uploaded(self, tmp_path: Path) -> None:
+        storage = LocalStorage(tmp_path)
+        await storage.upload("scans/abc/report.pdf", b"%PDF-1.7", content_type="application/pdf")
+
+        assert await storage.download("scans/abc/report.pdf") == b"%PDF-1.7"
+
+    async def test_download_returns_none_for_a_missing_key(self, tmp_path: Path) -> None:
+        """A miss is an ordinary answer, not a failure — the caller this exists
+        for is a cache read."""
+        storage = LocalStorage(tmp_path)
+
+        assert await storage.download("scans/never/report.pdf") is None
+
+    async def test_download_returns_none_for_a_directory(self, tmp_path: Path) -> None:
+        storage = LocalStorage(tmp_path)
+        await storage.upload("scans/abc/report.pdf", b"data", content_type="application/pdf")
+
+        assert await storage.download("scans/abc") is None
+
+    @pytest.mark.parametrize("key", ["../../etc/passwd", "scans/../../secret.pdf"])
+    async def test_download_rejects_keys_that_escape_the_root(
+        self, tmp_path: Path, key: str
+    ) -> None:
+        """Reading is the less alarming direction and still serves an arbitrary
+        file on disk to whoever asked for it."""
+        storage = LocalStorage(tmp_path / "root")
+
+        with pytest.raises(UnsafeStorageKey):
+            await storage.download(key)
+
     def test_satisfies_the_protocol(self, tmp_path: Path) -> None:
         assert isinstance(LocalStorage(tmp_path), Storage)
+
+
+class TestNullStorage:
+    """The default. Its job is to refuse rather than to silently discard."""
+
+    async def test_upload_raises(self) -> None:
+        with pytest.raises(StorageUnavailable):
+            await NullStorage().upload("report.pdf", b"data", content_type="application/pdf")
+
+    async def test_download_raises_rather_than_reporting_a_miss(self) -> None:
+        """Returning None here would have a cache read miss forever and
+        re-render on every request, hiding the misconfiguration."""
+        with pytest.raises(StorageUnavailable):
+            await NullStorage().download("report.pdf")
+
+    def test_satisfies_the_protocol(self) -> None:
+        assert isinstance(NullStorage(), Storage)
+
+    def test_is_the_default(self) -> None:
+        """Nothing installs storage in the suite — lifespan does not run under
+        ASGITransport — so an unconfigured process refuses."""
+        assert isinstance(get_storage(), NullStorage)
+
+    def test_the_storage_is_swappable(self, tmp_path: Path) -> None:
+        original = get_storage()
+        replacement = LocalStorage(tmp_path)
+        try:
+            set_storage(replacement)
+            assert get_storage() is replacement
+        finally:
+            set_storage(original)

@@ -1,0 +1,195 @@
+# Continuous integration.
+#
+# This file is also a finding SentinelOps reports about itself: the deployment
+# scanner's `ci` check looks for exactly `.github/workflows/`, and its absence
+# cost this project 4 points on every self-scan. Fixing it here is the project
+# taking its own advice, which is the only honest way to ship a tool like this.
+#
+# Three jobs, deliberately independent so a frontend typo does not hide a
+# backend failure behind a cancelled run. Each one reproduces a command that
+# already exists locally — nothing here is a CI-only invocation, because a check
+# a developer cannot run before pushing is a check they will learn to ignore.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+# Least privilege by default. Any job needing more asks for it locally.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run irrelevant. `main` is
+# excluded from cancellation so the history of what passed on it stays complete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Pinned to the version the runtime image copies from ghcr, so CI resolves
+  # dependencies exactly as the build does. An unpinned installer is the same
+  # class of problem as an unpinned base image.
+  UV_VERSION: "0.11.7"
+
+jobs:
+  backend:
+    name: Backend — lint, format, tests
+    runs-on: ubuntu-latest
+
+    services:
+      # The suite runs against a real PostgreSQL rather than SQLite: the schema
+      # uses native enums, JSONB and `gen_random_uuid()`, so a substitute would
+      # pass tests the production database would fail. conftest creates and
+      # drops a `_test` database of its own, which needs the superuser this
+      # service provides.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: sentinelops
+          POSTGRES_PASSWORD: sentinelops
+          POSTGRES_DB: sentinelops
+        ports:
+          - 5432:5432
+        # Without this the first test can connect before Postgres is accepting
+        # connections, which fails as a confusing timeout rather than as a
+        # missing service.
+        options: >-
+          --health-cmd "pg_isready -U sentinelops"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@localhost:5432/sentinelops
+      ENVIRONMENT: test
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the runtime image. requires-python allows 3.13, but CI
+          # should fail where production would.
+          python-version: "3.14"
+
+      - name: Install uv
+        run: python -m pip install "uv==${UV_VERSION}"
+
+      - name: Install dependencies
+        # --frozen fails if uv.lock disagrees with pyproject.toml, so a
+        # hand-edited dependency that was never locked breaks here rather than
+        # in an image build later.
+        #
+        # --all-groups, not --all-extras: ruff and pytest live in
+        # [dependency-groups], and this project declares no extras at all, so
+        # --all-extras would install neither and every check below would fail on
+        # a missing command.
+        run: uv sync --frozen --all-groups
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Tests
+        # The sandbox integration test runs here rather than skipping: GitHub's
+        # runners have a Docker daemon, and it is the one test that proves the
+        # containment flags do what every other test asserts they say.
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend — lint, types, tests, build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # `ci` rather than `install`: it installs exactly the lockfile and fails
+        # if package.json disagrees, where `install` would quietly resolve
+        # something newer and make the run unreproducible.
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Types
+        # `tsc -b` rather than `--noEmit`: the build uses project references,
+        # and the two configurations do not check the same files. A type error
+        # in a test file was caught by `-b` after `--noEmit` reported clean.
+        run: npx tsc -b
+
+      - name: Tests
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
+
+  images:
+    name: Images — api and worker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Both targets, because they diverge: the worker carries git and the
+      # docker client, the api does not. This job exists because of a real
+      # outage — `httpx` was a dev-only dependency imported at runtime, so both
+      # images built fine and crashed on start. Building is necessary but not
+      # sufficient, hence the import check below.
+      - name: Build api
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          push: false
+          load: true
+          tags: sentinelops-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build worker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: worker
+          push: false
+          load: true
+          tags: sentinelops-worker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Both images can import their entrypoint
+        # The check that would have caught the httpx outage. A missing runtime
+        # dependency is invisible to `docker build` and fatal on first start.
+        run: |
+          docker run --rm --entrypoint python sentinelops-api:ci -c "import app.main"
+          docker run --rm --entrypoint python sentinelops-worker:ci -c "import app.workers.settings"
+
+      - name: The worker has the tools it shells out to
+        # git for cloning, docker for the sandbox. Both are copied in rather
+        # than installed by the base image, so a Dockerfile edit can silently
+        # remove them and only fail at scan time.
+        run: |
+          docker run --rm --entrypoint git sentinelops-worker:ci --version
+          docker run --rm --entrypoint docker sentinelops-worker:ci --version

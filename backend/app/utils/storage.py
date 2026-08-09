@@ -7,6 +7,12 @@ bucket client.
 The local implementation writes under a configured directory, which is what
 development uses. Cloud Storage or S3 becomes another class implementing the
 same Protocol, and no caller changes.
+
+Two implementations: `LocalStorage` for real use, and `NullStorage`, which is
+the default and refuses. The reason for refusing differs from the sandbox's. A
+missing sandbox must not produce a *passing* check; a missing storage backend
+must not produce a *silently unsaved* report. A caller that believes it
+persisted something and did not is worse off than one that got an error.
 """
 
 import asyncio
@@ -17,6 +23,14 @@ from typing import Protocol, runtime_checkable
 
 class UnsafeStorageKey(ValueError):
     """Raised for a key that would write outside the storage root."""
+
+
+class StorageUnavailable(Exception):
+    """No storage backend is configured here.
+
+    Raised rather than returned so it cannot be mistaken for a successful
+    write. A caller catching this must not report the artefact as saved.
+    """
 
 
 def _is_reserved_name(key: str) -> bool:
@@ -38,6 +52,17 @@ class Storage(Protocol):
 
         The locator is a path in development and a URL in a deployed
         environment, so callers should treat it as opaque and store it as given.
+        """
+        ...
+
+    async def download(self, key: str) -> bytes | None:
+        """Return what is stored under `key`, or None if nothing is.
+
+        By key rather than by the locator `upload` returned, so that a caller
+        holding only a key can read — and so a locator stays opaque. None for a
+        miss rather than an exception, because the caller this exists for is a
+        cache read, where "not stored" is an ordinary answer and not a failure.
+        A backend that cannot be reached at all still raises.
         """
         ...
 
@@ -86,3 +111,61 @@ class LocalStorage:
         # an async handler stalls every other request on the same worker.
         await asyncio.to_thread(_write)
         return str(destination)
+
+    async def download(self, key: str) -> bytes | None:
+        # Resolved through the same guard as a write. A read is the less
+        # alarming direction, but a key that escapes the root would still serve
+        # an arbitrary file on disk to whoever asked for it.
+        source = self._resolve(key)
+
+        def _read() -> bytes | None:
+            # Asked rather than caught: a key that another key nested under
+            # names a directory, which holds no content and is therefore a
+            # miss — but reading one raises IsADirectoryError on Linux and
+            # PermissionError on Windows, and PermissionError on a real file is
+            # a genuine failure that must not be reported as a miss.
+            if source.is_dir():
+                return None
+            try:
+                return source.read_bytes()
+            except FileNotFoundError:
+                return None
+
+        return await asyncio.to_thread(_read)
+
+
+class NullStorage:
+    """Refuses every operation.
+
+    The default, so that any environment where storage was never installed
+    fails loudly at the first attempt to persist something instead of
+    discarding it. Tests get this too — httpx's ASGITransport does not run
+    lifespan events, so a test that needs storage installs it deliberately.
+    """
+
+    async def upload(self, key: str, content: bytes, *, content_type: str) -> str:
+        del content, content_type
+        raise StorageUnavailable(
+            f"No storage backend is configured, so {key!r} was not saved. "
+            "Set STORAGE_DIR and install a backend at startup."
+        )
+
+    async def download(self, key: str) -> bytes | None:
+        # Not None. A miss and an absent backend are different facts, and
+        # answering "nothing is stored there" would have a cache read report a
+        # miss forever and re-render on every single request.
+        raise StorageUnavailable(f"No storage backend is configured, so {key!r} could not be read.")
+
+
+_storage: Storage = NullStorage()
+
+
+def get_storage() -> Storage:
+    return _storage
+
+
+def set_storage(storage: Storage) -> None:
+    """Swap the implementation. Called at startup once a storage directory or
+    bucket is configured, and by tests that need somewhere real to write."""
+    global _storage
+    _storage = storage

@@ -579,10 +579,18 @@ endpoints are rate limited.
 Private repositories use a GitHub App rather than stored access tokens, so
 credentials expire hourly and are never persisted.
 
-Deliberately deferred: CI for SentinelOps itself and metrics — which are, not
-coincidentally, two of the three findings its own scanner reports about it. The
-third arrived the day Trivy did: a real advisory against a pinned version, which
-is the point of running the thing on yourself.
+Two of the three findings SentinelOps reported about itself were its own missing
+CI and its own missing metrics. **CI is now in
+[.github/workflows/ci.yml](.github/workflows/ci.yml)** — added because the tool
+kept saying so, which is the only honest way to ship something that grades other
+people's repositories. Metrics remain deferred, and the third finding is a real
+advisory against a version this project pins.
+
+The pipeline runs three independent jobs: backend lint, format and the full
+suite against a real PostgreSQL service; frontend lint, types, tests and build;
+and both container images built and then *started*, because a missing runtime
+dependency is invisible to `docker build` and fatal on first run — which is
+exactly how this project once shipped two images that crashed on import.
 
 ## Stack
 

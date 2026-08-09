@@ -53,9 +53,32 @@ assert sum(CATEGORY_WEIGHTS.values()) == MAX_SCORE, "category weights must sum t
 assert set(CATEGORY_WEIGHTS) == set(SCAN_CATEGORIES), "weights must cover every scanner category"
 
 
+# Score floors for each letter, highest first. The frontend's scoreToGrade has
+# had the same table since the dashboard was built; this is the second copy, and
+# a deliberate one — a PDF is generated server-side and cannot call into
+# TypeScript. Worth folding into the API response the way category_max_scores
+# already was, so the two cannot drift, but that is a contract change and does
+# not belong inside a report.
+GRADE_THRESHOLDS: tuple[tuple[int, str], ...] = ((90, "A"), (80, "B"), (70, "C"), (60, "D"))
+
+# What a scan with no score shows. An em dash rather than "F": a scan that never
+# finished has not earned a failing grade, it has no grade at all.
+NO_GRADE = "—"
+
+
 def category_max_score(category: str) -> int:
     """The most a category can contribute. Zero for anything unrecognised."""
     return CATEGORY_WEIGHTS.get(category, 0)
+
+
+def score_to_grade(score: int | None) -> str:
+    """A 0-100 score as a letter. Matches the frontend's scoreToGrade exactly."""
+    if score is None:
+        return NO_GRADE
+    for floor, letter in GRADE_THRESHOLDS:
+        if score >= floor:
+            return letter
+    return "F"
 
 
 def score_category(category: str, findings: Iterable[ScanFinding]) -> int:

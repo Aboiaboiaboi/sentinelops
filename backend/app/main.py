@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.logging import configure_logging
 from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.utils.queue import ArqQueue, set_queue
+from app.utils.storage import LocalStorage, set_storage
 
 settings = get_settings()
 
@@ -22,14 +23,20 @@ configure_logging(settings.log_level)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Connect the real queue while the app is serving.
+    """Connect the real queue and storage while the app is serving.
 
     Tests never reach this: httpx's ASGITransport does not run lifespan events,
-    so the suite keeps the in-memory queue and needs no Redis. Which also means
-    a broken Redis connection shows up when the app boots, not in CI.
+    so the suite keeps the in-memory queue and the refusing storage, and needs
+    no Redis. Which also means a broken Redis connection shows up when the app
+    boots, not in CI.
+
+    Storage is installed here rather than in the worker because reports are
+    rendered on demand by the API, not at scan time — the worker never writes
+    one and has no reason to hold a bucket client.
     """
     pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     set_queue(ArqQueue(pool))
+    set_storage(LocalStorage(settings.storage_dir))
     try:
         yield
     finally:

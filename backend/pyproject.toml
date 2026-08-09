@@ -22,6 +22,11 @@ dependencies = [
     # the test suite, and stayed there when it stopped being — which built a
     # worker image (uv sync --no-dev) that crashed on import.
     "httpx>=0.28",
+    # PDF reports. Chosen over WeasyPrint by measurement, not preference:
+    # WeasyPrint renders the better document but needs GTK, which no lockfile
+    # records and which does not import on Windows — where this suite is run
+    # locally. Pure Python installs everywhere. See services/report_renderer.py.
+    "fpdf2>=2.8",
 ]
 
 [dependency-groups]
@@ -29,6 +34,10 @@ dev = [
     "ruff>=0.9",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
+    # Reads text back out of a rendered report. A test that asserts on byte
+    # length passes for a valid empty PDF, which is the same mistake as
+    # trusting a scanner's empty output.
+    "pypdf>=6.0",
 ]
 
 # This is an application, not a distributable library — there is nothing to build
