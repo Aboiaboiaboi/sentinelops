@@ -55,12 +55,25 @@ export default function ReportPage() {
           </Link>
         </Button>
 
-        <Button variant="outline" asChild>
-          {/* Server-rendered PDF; opens in a new tab rather than replacing the app. */}
-          <a href={reportUrl(scan.id)} target="_blank" rel="noreferrer">
+        {/*
+          A link only once there is something to download. The endpoint answers
+          409 for a scan that has not finished, and an anchor cannot be
+          disabled — `disabled` on an <a> is ignored, so `asChild` here would
+          render a control that looks unavailable and still navigates. A real
+          <button> is the only element the attribute means anything on.
+        */}
+        {finished ? (
+          <Button variant="outline" asChild>
+            {/* Server-rendered PDF; opens in a new tab rather than replacing the app. */}
+            <a href={reportUrl(scan.id)} target="_blank" rel="noreferrer">
+              <Download /> Download PDF
+            </a>
+          </Button>
+        ) : (
+          <Button variant="outline" disabled title="Available once the scan finishes">
             <Download /> Download PDF
-          </a>
-        </Button>
+          </Button>
+        )}
       </div>
 
       <header className="space-y-1">

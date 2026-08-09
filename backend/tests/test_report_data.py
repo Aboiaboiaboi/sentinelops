@@ -18,13 +18,13 @@ from app.services.scoring_service import score_to_grade
 
 
 def make_project(**overrides: object) -> Project:
-    return Project(
-        id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
-        name="Checkout service",
-        repository_url="https://github.com/acme/checkout",
-        **overrides,
-    )
+    defaults: dict[str, object] = {
+        "id": uuid.uuid4(),
+        "user_id": uuid.uuid4(),
+        "name": "Checkout service",
+        "repository_url": "https://github.com/acme/checkout",
+    }
+    return Project(**(defaults | overrides))
 
 
 def make_scan(**overrides: object) -> Scan:

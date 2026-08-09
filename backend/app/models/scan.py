@@ -176,6 +176,19 @@ class Scan(Base):
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )
 
+    # Storage key of the most recently rendered PDF. The key embeds a
+    # fingerprint of what the document says, so a rename produces a different
+    # key and the old copy stops being used.
+    #
+    # A record of what was stored, not the cache's authority: whether a copy
+    # exists is a question for storage, and report_cache asks it directly. This
+    # is what a later "delete a scan's artefacts" would read, and what makes a
+    # stored report findable without recomputing the fingerprint.
+    #
+    # Nullable rather than defaulted to "": null means "nothing stored", which
+    # is a different fact from an empty key and the one every scan starts with.
+    report_key: Mapped[str | None] = mapped_column(String(200), default=None)
+
     # Why a failed scan failed. Null for anything that has not failed.
     #
     # `error_detail` is built from the *exception type*, never from git's

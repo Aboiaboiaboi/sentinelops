@@ -28,17 +28,21 @@ Here is SentinelOps scanning **itself**, which is the real output of the
 commands below rather than an illustration:
 
 ```
-sentinelops                                        89 / 100    Grade A
+sentinelops                                        93 / 100    Grade A
 6 of 6 categories reported
-29 checks: 22 passed · 4 skipped · 3 failed
+29 checks: 23 passed · 4 skipped · 2 failed
 
   Security         22 / 25   ██████████████████░░
   Architecture     20 / 20   ████████████████████
   Reliability      20 / 20   ████████████████████
+  Deployment       15 / 15   ████████████████████
   Scalability      10 / 10   ████████████████████
-  Deployment       11 / 15   ██████████████░░░░░░
   Observability     6 / 10   ████████████░░░░░░░░
 ```
+
+Deployment reached full marks on this run because the CI pipeline the scanner
+kept asking for now exists. That check went from failing to passing without
+anybody special-casing it — the repository changed, so the score did.
 
 The three points Security lost are a real advisory against a version this
 project pins, found by Trivy on the run above — not an illustration:
@@ -61,11 +65,11 @@ client-only SPA does not have. Clearing it completely means `react-router@8.3.0`
 which requires React ≥19.2.7 and Node ≥22.22 — a framework upgrade, not a
 dependency bump, and its own piece of work.
 
-So the score went 90 → 89 for a change that reduced real risk. That is the
-scanner being right rather than being flattering: the vulnerable code is
-genuinely installed, and *reachability is a judgement the tool should not quietly
-make on your behalf*. Suppressing the finding was the tempting option and it is
-the one this project exists to argue against.
+So the score went 90 → 89 for a change that reduced real risk, then 89 → 93
+when CI landed. That is the scanner being right rather than being flattering:
+the vulnerable code is genuinely installed, and *reachability is a judgement the
+tool should not quietly make on your behalf*. Suppressing the finding was the
+tempting option and it is the one this project exists to argue against.
 
 Each finding tells you what it found and what to do:
 
@@ -78,11 +82,50 @@ Each finding tells you what it found and what to do:
 > health, and send unhandled exceptions to an error tracker so they are seen
 > without being hunted.
 
-All three of its findings are fair. Two are on the roadmap below; the third is a
+Both of its findings are fair. One is on the roadmap below; the other is a
 dependency upgrade this project owes, reported by its own scanner.
+
+Every scan is downloadable as a PDF that says the same things this page does —
+the score, the category breakdown, each finding with its recommendation, and all
+29 checks including the ones that were skipped and why.
 
 It **reads** code and configuration. It never runs the repository, deploys
 anything, or changes it.
+
+---
+
+## What it's for
+
+**A backend service you are about to deploy.** Something containerised, that
+serves HTTP, talks to a database, and might one day run as more than one copy.
+Django, FastAPI, Express, NestJS, Rails, Spring Boot — on Cloud Run, Fly,
+Render, ECS or Kubernetes.
+
+That is the shape all 29 checks assume, and the question they answer is
+**"what did we forget?"**. Not the interesting problems — the boring, fatal
+ones. No CI. No healthcheck. Container running as root. Base image unpinned. A
+credential committed last March. No timeout on the payment API call. Sessions
+kept in process memory, which works perfectly until the day you scale to two
+instances.
+
+| Good fit | Why |
+|---|---|
+| A product or SaaS API before launch | Every check applies, and 100 is genuinely reachable |
+| Internal tools and admin dashboards | Usually the worst offenders, because "it's only internal" |
+| A codebase you have just inherited | 29 answers about what is actually there beats a week of reading |
+| One repository per service, scanned repeatedly | The score moving is worth more than the score |
+
+| Poor fit | Why |
+|---|---|
+| Static sites, libraries, mobile and CLI apps | Nothing is deployed, so most of the rubric does not apply |
+| Notebooks and research code | No service to assess |
+| A monorepo holding several services | It scans a repository as one unit, so one weak service hides inside a good average |
+
+Two honest limits. **Scores only compare like with like** — a CLI tool has all
+three scalability checks skipped, so it cannot pass 90, and its 85 is not a web
+service's 85. And **it never runs your code**, so anything that only appears at
+runtime is invisible to it. This is a readiness checklist that shows its work,
+not a penetration test.
 
 ---
 
@@ -233,31 +276,27 @@ measured false-positive rate is zero.
 
 ### It tries hard not to cry wolf
 
-A scanner that flags healthy code gets ignored, and then it catches nothing. So:
+A scanner that flags healthy code gets muted, and a muted scanner catches
+nothing. So it only reports what it can evidence:
 
-- **A CLI tool isn't penalised for having no health endpoint.** It shouldn't
-  have one. Checks that only make sense for a web service are *skipped* for
-  anything else — and a skip is reported as a skip, never quietly as a pass.
-- **Test files are judged differently from production code.** A test that
-  deliberately swallows an exception is fine, and a format-valid fake key in a
-  fixture is a fixture. That one is measured, not assumed: run against a fresh
-  clone of SentinelOps, Gitleaks reports seven leaks and all seven are fixtures
-  in the security scanner's own tests. The cost is that a real credential
-  committed inside a test is not reported — a trade taken deliberately, because
-  a tool that flags a project's own fixtures gets muted, and a muted tool
-  catches nothing.
-- **Machine-generated code is excluded.** On some repositories that's 80%+ of
-  the files, and "split this 4000-line generated client into modules" is not
-  advice anyone can act on.
-- **A library mentioned in a comment isn't a library you use.** Evidence means
-  an import, a dependency, or an actual call.
-- **A filename alone never convicts.** A committed `.env` where every secret is
-  blank or `changethis` is a template; a `.pem` is flagged only if its own
-  header says *private* key, because a public certificate is supposed to be
-  committed; `${VAR}` in an `.npmrc` is interpolation done right, not a token.
-- **An empty repository is not a perfect one.** With no source code there is
-  nothing to assess, so it scores 0 out of 100 rather than collecting marks for
-  problems nobody could find. It used to score 77.
+- **Checks that don't apply are skipped, not failed.** A CLI tool shouldn't have
+  a health endpoint. A skip is always reported as a skip, never as a pass.
+- **Test code is judged differently.** A swallowed exception in a test is fine,
+  and a fake key in a fixture is a fixture.
+- **Generated code is excluded.** "Split this 4000-line generated client into
+  modules" is not advice anyone can act on.
+- **A filename never convicts on its own.** A `.env` full of `changethis` is a
+  template, a `.pem` is flagged only if its header says *private*, and a library
+  named in a comment is not a library you use.
+
+Two things this costs, both deliberate:
+
+- **A real credential inside a test directory goes unreported.** The alternative
+  is flagging your own fixtures — on a fresh clone of this repository, Gitleaks
+  finds seven "leaks" and all seven are the security scanner's own test data.
+- **It won't flatter an empty repository either.** No source code means nothing
+  was assessed, so it scores 0 rather than collecting marks for problems nobody
+  could find. It used to score 77.
 
 ---
 
@@ -272,6 +311,7 @@ makes it checkable:
 | **What was checked** | All 29 checks with an outcome each — passed, failed, skipped with a reason, or errored when a tool could not run | A category at full marks can say *what it verified*, instead of merely having nothing to complain about |
 | **Comparison** | Score and per-category movement against the previous scan, plus the exact checks that flipped | Regressions first, because what broke is what you need to see |
 | **Failure diagnostics** | A category, a plain-language detail, and a suggested fix when a scan fails | A scan that just says "failed" is a dead end |
+| **PDF report** | `GET /scans/{id}/report` — the same score, breakdown, findings and 29 check outcomes as a document | A scan you can attach to a ticket or hand to somebody who does not have a login |
 
 The comparison is deliberately conservative and will **decline** to show a
 difference in three cases: when the scoring rules changed between the two scans
@@ -504,6 +544,8 @@ disappearing.
 | `backend/app/scanners/security/tools/` | One module per sandboxed tool: build the spec, parse the output, return a `CheckResult` |
 | `backend/app/workers/` | Queue tasks and repository cloning |
 | `backend/app/utils/sandbox.py` | The container boundary. The only place that starts a process the repository can influence |
+| `backend/app/services/report_*.py` | What the report says, how it is drawn, and when a stored copy may be reused — three files because the middle one is the replaceable part |
+| `backend/app/assets/fonts/` | DejaVu, vendored. fpdf2's built-in fonts are latin-1 only, and repository text is not |
 | `backend/app/models/` `schemas/` | Database tables, and API shapes — deliberately separate |
 | `frontend/src/api/` `hooks/` | Fetch functions, and the query wrappers around them |
 | `frontend/src/pages/` `components/` | Screens and the pieces they're built from |
@@ -521,8 +563,11 @@ Three boundaries do real work:
   files allowed to know how work leaves the process — a bucket, a broker, or a
   container runtime. There are currently **zero** cloud SDK dependencies, so the
   containers run anywhere; swapping Redis for SQS, or Docker for Cloud Run Jobs,
-  is a change in one file. `sandbox.py` defaults to refusing: with no runtime
-  configured a tool check reports *errored*, never *passed*.
+  is a change in one file. Two of the three default to refusing, for different
+  reasons: with no container runtime a tool check reports *errored*, never
+  *passed*; with no storage configured a write raises rather than being
+  discarded, because a caller that believes it saved something and did not is
+  worse off than one that got an error.
 
 ### Security
 
@@ -572,19 +617,23 @@ endpoints are rate limited.
       run concurrently under a bounded container limit, so the category costs
       the slowest tool rather than the sum of them. OSV was dropped as a
       duplicate of Trivy
-- [ ] **Reporting** — PDF export
+- [x] **Reporting** — PDF export, rendered on demand behind a `ReportRenderer`
+      boundary and cached in object storage under a key that fingerprints what
+      the document says, so renaming a scan produces a fresh document rather
+      than a stale one
 - [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
       Cloud Run
 
 Private repositories use a GitHub App rather than stored access tokens, so
 credentials expire hourly and are never persisted.
 
-Two of the three findings SentinelOps reported about itself were its own missing
-CI and its own missing metrics. **CI is now in
+Two of the findings SentinelOps reported about itself were its own missing CI
+and its own missing metrics. **CI is now in
 [.github/workflows/ci.yml](.github/workflows/ci.yml)** — added because the tool
 kept saying so, which is the only honest way to ship something that grades other
-people's repositories. Metrics remain deferred, and the third finding is a real
-advisory against a version this project pins.
+people's repositories, and it is what took Deployment to 15/15 above. Metrics
+remain deferred, and the remaining finding is a real advisory against a version
+this project pins.
 
 The pipeline runs three independent jobs: backend lint, format and the full
 suite against a real PostgreSQL service; frontend lint, types, tests and build;

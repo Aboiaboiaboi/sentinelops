@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     rate_limit_storage_uri: str = "memory://"
     login_rate_limit: str = "10/minute"
     signup_rate_limit: str = "5/minute"
+    # Rendering a report is the most expensive GET in the API, and it is
+    # reachable by opening a tab repeatedly. Generous enough that nobody
+    # downloading their own reports will notice — this is a ceiling on a loop,
+    # not a quota.
+    report_rate_limit: str = "20/minute"
 
     # GitHub App credentials for private-repository access. Both empty by
     # default: the feature simply reports itself as unconfigured, and public

@@ -166,6 +166,48 @@ async def get_scan(db: AsyncSession, *, owner: User, scan_id: uuid.UUID) -> Scan
     )
 
 
+@dataclass(frozen=True)
+class ReportInputs:
+    """Everything a report is built from, loaded in one place.
+
+    A report needs the project as well as the scan, and `Scan.project` is
+    `lazy="raise_on_sql"` — so the alternative is a route that runs its own
+    queries, which is where an ownership check gets forgotten. Bundling them
+    keeps the rule this module exists for: reaching a scan means proving the
+    project it belongs to is yours.
+    """
+
+    scan: Scan
+    project: Project
+    findings: Sequence[Finding]
+
+
+async def get_report_inputs(
+    db: AsyncSession, *, owner: User, scan_id: uuid.UUID
+) -> ReportInputs | None:
+    """Load a scan, its project and its findings, or None if it is not theirs."""
+    row = (
+        await db.execute(
+            select(Scan, Project)
+            .join(Project, Scan.project_id == Project.id)
+            .where(Scan.id == scan_id, Project.user_id == owner.id)
+        )
+    ).first()
+    if row is None:
+        return None
+
+    scan, project = row
+    findings = await db.scalars(
+        select(Finding)
+        .where(Finding.scan_id == scan.id)
+        # Same order as the findings endpoint, so a report and the screen list
+        # them identically. The Postgres enum was declared LOW..CRITICAL, so
+        # descending puts the most severe first.
+        .order_by(Finding.severity.desc(), Finding.score_impact.desc())
+    )
+    return ReportInputs(scan=scan, project=project, findings=findings.all())
+
+
 # ---------------------------------------------------------------------------
 # Progress. These four functions are the ONLY place a scan's status, score,
 # scoring_version or category_status may be written.
@@ -352,6 +394,23 @@ async def record_commit_context(
             committed_at=committed_at,
         )
     )
+    await db.commit()
+
+
+async def record_report_key(db: AsyncSession, *, scan_id: uuid.UUID, key: str) -> None:
+    """Record where this scan's rendered report was stored.
+
+    Unguarded on status, like record_commit_context: this is a pointer at a
+    cache entry, not a lifecycle transition. The worst a race can do is have
+    two concurrent downloads store the same bytes under the same key and write
+    it twice, which is two identical UPDATEs.
+
+    Committed rather than left to the request's session, because the row must
+    point at the stored object even if something later in the response fails —
+    the object is already in storage by the time this is called, and a pointer
+    that never landed would leak it.
+    """
+    await db.execute(update(Scan).where(Scan.id == scan_id).values(report_key=key))
     await db.commit()
 
 
