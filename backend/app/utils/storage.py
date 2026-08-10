@@ -4,21 +4,49 @@ The second of the two modules permitted to know about a cloud SDK. Generated
 PDF reports go through here; nothing else in the application should ever hold a
 bucket client.
 
-The local implementation writes under a configured directory, which is what
-development uses. Cloud Storage or S3 becomes another class implementing the
-same Protocol, and no caller changes.
+Three implementations: `LocalStorage` writes under a configured directory and is
+what development uses, `GcsStorage` talks to a Cloud Storage bucket and is what
+a deployment uses, and `NullStorage` is the default and refuses. The reason for
+refusing differs from the sandbox's. A missing sandbox must not produce a
+*passing* check; a missing storage backend must not produce a *silently unsaved*
+report. A caller that believes it persisted something and did not is worse off
+than one that got an error.
 
-Two implementations: `LocalStorage` for real use, and `NullStorage`, which is
-the default and refuses. The reason for refusing differs from the sandbox's. A
-missing sandbox must not produce a *passing* check; a missing storage backend
-must not produce a *silently unsaved* report. A caller that believes it
-persisted something and did not is worse off than one that got an error.
+**The cloud SDK is not a dependency of this module.** `google-cloud-storage`
+lives in the optional `gcs` dependency group and is imported inside
+`GcsStorage.__init__`, never at module scope. An install without it imports this
+file, runs the suite, and uses LocalStorage exactly as before — which is what
+keeps "zero cloud SDKs" true of the default install, and with it the argument
+that a second deployment target is a new class here rather than a redesign.
 """
 
 import asyncio
+import logging
 import os.path
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
+
+
+def _is_rooted(key: str) -> bool:
+    """Whether a key begins at a root, under the stricter of the two platforms.
+
+    Deliberately not `Path(key).is_absolute()`, which is the obvious version and
+    is wrong twice over. It answers True for `/x` on Linux and **False on
+    Windows**, where absoluteness requires a drive — so the guard would pass
+    locally and reject in the container, or the reverse. And `is_absolute()` is
+    False for `\\x` even on Windows, though `root / "\\x"` there discards the
+    root and keeps only the drive, which is exactly the escape being guarded
+    against.
+
+    `PureWindowsPath` is asked because its rules are the superset: it treats
+    both separators as separators, and it is the only one of the two with a
+    concept of a drive. Both were found by running the guard and reading what it
+    said, not by reading the documentation.
+    """
+    candidate = PureWindowsPath(key)
+    return bool(candidate.root) or bool(candidate.drive)
 
 
 class UnsafeStorageKey(ValueError):
@@ -129,6 +157,87 @@ class LocalStorage:
             try:
                 return source.read_bytes()
             except FileNotFoundError:
+                return None
+
+        return await asyncio.to_thread(_read)
+
+
+class GcsStorage:
+    """Cloud Storage backed storage for a single bucket.
+
+    Credentials are never passed in. The client resolves them from the
+    environment, which on Cloud Run means the service account attached to the
+    container — no key stored, nothing to rotate, and nothing about *where* this
+    runs written down in the application. The bucket name is the whole of the
+    configuration.
+    """
+
+    def __init__(self, bucket: str) -> None:
+        # Imported here rather than at module scope. Everything else in this
+        # file works without the SDK installed, and the worker image has no use
+        # for it at all — a top-level import would make a cloud library a hard
+        # requirement of importing the storage boundary.
+        from google.cloud import storage  # noqa: PLC0415
+
+        self._bucket_name = bucket
+        # One client, reused. Constructing one per call would re-resolve
+        # credentials and open a new connection pool for every report.
+        self._bucket = storage.Client().bucket(bucket)
+
+    def _blob(self, key: str):
+        """Map a key to a blob, refusing anything a filesystem would refuse.
+
+        A bucket is flat and `../etc/passwd` is a perfectly legal object name,
+        so none of `LocalStorage._resolve`'s reasoning transfers — there is no
+        root to escape. The guard is kept anyway, and deliberately: the same key
+        is what `LocalStorage` writes to disk in development, and it reaches a
+        `Content-Disposition` header on the way out. A key that is safe in one
+        backend and not the other is a bug that only appears in production.
+
+        An empty key is rejected too. GCS accepts it and creates an object that
+        cannot be addressed by name afterwards.
+        """
+        if not key or key != key.strip():
+            raise UnsafeStorageKey(f"Storage key must be a non-blank, untrimmed path: {key!r}")
+        if _is_rooted(key):
+            raise UnsafeStorageKey(f"Storage key must be a relative path: {key!r}")
+        if _is_reserved_name(key):
+            raise UnsafeStorageKey(f"Storage key is a reserved device name: {key!r}")
+        # Both separators, because this key is also handed to LocalStorage in
+        # development, where a backslash is one.
+        if ".." in PurePosixPath(key).parts or ".." in PureWindowsPath(key).parts:
+            raise UnsafeStorageKey(f"Storage key escapes the storage root: {key!r}")
+        return self._bucket.blob(key)
+
+    async def upload(self, key: str, content: bytes, *, content_type: str) -> str:
+        blob = self._blob(key)
+
+        def _write() -> None:
+            blob.upload_from_string(content, content_type=content_type)
+
+        # The SDK is synchronous — it is `requests` underneath. Called directly
+        # from a handler it would block the event loop for the whole round trip
+        # to Google, which is the failure mode bcrypt already demonstrated at
+        # 1561ms. Same treatment LocalStorage.upload gives a disk write.
+        await asyncio.to_thread(_write)
+        # gs:// rather than an https URL: the locator is opaque to callers and
+        # is stored, and a signed or public URL would expire or leak.
+        return f"gs://{self._bucket_name}/{key}"
+
+    async def download(self, key: str) -> bytes | None:
+        from google.cloud.exceptions import NotFound  # noqa: PLC0415
+
+        blob = self._blob(key)
+
+        def _read() -> bytes | None:
+            try:
+                return blob.download_as_bytes()
+            except NotFound:
+                # A miss, and an ordinary one — this is a cache read. Every
+                # other failure, including a permission error and an unreachable
+                # bucket, propagates: answering "nothing is stored there"
+                # because the credentials are wrong would re-render on every
+                # single request and never say why.
                 return None
 
         return await asyncio.to_thread(_read)

@@ -33,10 +33,19 @@ COPY pyproject.toml uv.lock ./
 # --frozen fails the build if uv.lock disagrees with pyproject.toml, so an image
 # can never be built from an unlocked or stale dependency set.
 # --no-dev leaves pytest, ruff and friends out of the runtime image.
+# --group gcs adds the Cloud Storage SDK, which is optional everywhere else:
+# development uses LocalStorage and the suite installs it only for the emulator
+# tests, but a deployed API writes reports to a bucket and would refuse to start
+# without it.
 # The cache mount persists uv's download cache between builds without adding a
 # layer to the final image.
+#
+# One builder for both images, so the worker carries an SDK it never calls. That
+# is deliberate: an identical virtualenv is one layer, pulled once and shared by
+# both images in the registry and on the host. Two builders producing two
+# almost-identical venvs would store and transfer both.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --group gcs
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime — only what is needed to serve requests.

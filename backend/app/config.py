@@ -41,6 +41,21 @@ class Settings(BaseSettings):
     # replaced by a bucket once there is somewhere to deploy to.
     storage_dir: Path = Path("reports")
 
+    # The Cloud Storage bucket reports are written to when deployed. Empty
+    # means "use storage_dir", which is what development wants.
+    #
+    # A name, not a URL, and no project or region anywhere near it: those are
+    # properties of the infrastructure that created the bucket, and the
+    # application resolving them would be the application knowing where it is
+    # deployed. The service account attached to the container supplies the
+    # credentials, so there is nothing here to keep secret.
+    #
+    # LocalStorage on Cloud Run is the trap this exists to close. It writes to
+    # the container filesystem, which is per-instance and discarded at
+    # scale-to-zero — so the report cache would not error, it would quietly
+    # re-render on every replica and lose everything on the way down.
+    storage_bucket: str = ""
+
     # Job queue. Matches docker-compose.yml; database 0 is arq's, and the rate
     # limiter would take a different one if it ever moves off memory://.
     redis_url: str = "redis://localhost:6379/0"

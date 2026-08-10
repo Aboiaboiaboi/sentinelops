@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -12,13 +13,15 @@ from app.config import get_settings
 from app.logging import configure_logging
 from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.utils.queue import ArqQueue, set_queue
-from app.utils.storage import LocalStorage, set_storage
+from app.utils.storage import GcsStorage, LocalStorage, Storage, set_storage
 
 settings = get_settings()
 
 # Before the app is constructed, so anything FastAPI or uvicorn logs during
 # startup is already going through the JSON handler.
 configure_logging(settings.log_level)
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -36,11 +39,33 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """
     pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     set_queue(ArqQueue(pool))
-    set_storage(LocalStorage(settings.storage_dir))
+    set_storage(_build_storage())
     try:
         yield
     finally:
         await pool.aclose()
+
+
+def _build_storage() -> Storage:
+    """A bucket if one is configured, the filesystem otherwise.
+
+    The bucket wins when both are set. STORAGE_DIR has a default and is baked
+    into the image, so a deployment configuring a bucket would otherwise have to
+    remember to unset something to make it take effect — and the failure would
+    be silent: reports written to a container filesystem that is discarded at
+    scale-to-zero, with nothing in the logs to say so.
+
+    Constructed eagerly, so a missing SDK or unreadable credentials stop the app
+    from starting rather than surfacing on the first download somebody attempts.
+    """
+    if settings.storage_bucket:
+        logger.info("Storing reports in Cloud Storage", extra={"bucket": settings.storage_bucket})
+        return GcsStorage(settings.storage_bucket)
+
+    logger.info(
+        "Storing reports on the local filesystem", extra={"path": str(settings.storage_dir)}
+    )
+    return LocalStorage(settings.storage_dir)
 
 
 # Routes are mounted at the root, not under /api. The frontend's dev server
