@@ -1,0 +1,28 @@
+# Copy to terraform.tfvars, which bootstrap.sh writes the first three of for
+# you. terraform.tfvars is gitignored — not because these values are secret,
+# but because they name one particular deployment and this directory describes
+# the shape of any of them.
+
+project_id      = "sentinelops-prod"
+region          = "us-central1"
+billing_account = "01ABCD-234567-89EFGH"
+
+# Scoped exactly. This one string is what stops a workflow in any other GitHub
+# repository from minting a token for this project.
+github_repository = "Aboiaboiaboi/sentinelops"
+
+# Digests, not tags. The CI publish job prints these into its run summary; the
+# deploy workflow passes them with -var rather than editing this file.
+api_image    = "us-central1-docker.pkg.dev/sentinelops-prod/sentinelops/api@sha256:..."
+worker_image = "us-central1-docker.pkg.dev/sentinelops-prod/sentinelops/worker@sha256:..."
+
+# Empty until Firebase Hosting exists in milestone 6.
+frontend_url = ""
+
+# Defaults are the cheap ones. Raise db_tier when the k6 numbers say the
+# database is the ceiling, not before.
+# db_tier              = "db-f1-micro"
+# redis_memory_gb      = 1
+# api_max_instances    = 5
+# worker_max_instances = 3
+# monthly_budget       = 60

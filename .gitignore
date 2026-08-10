@@ -46,3 +46,17 @@ repos/
 
 # Generated PDF reports
 reports/
+
+# Terraform. The provider directory is hundreds of megabytes of downloaded
+# binary; the lock file next to it is NOT ignored, because it pins the provider
+# hashes and is the reason two people get the same plan.
+deploy/.terraform/
+# State never belongs in git: it holds every generated password in plain text,
+# and two people committing it produces a merge conflict that no longer
+# describes any real infrastructure. It lives in the bucket bootstrap.sh makes.
+*.tfstate
+*.tfstate.*
+# Names one particular deployment, and backend.hcl points at its state bucket.
+deploy/terraform.tfvars
+deploy/backend.hcl
+crash.log
