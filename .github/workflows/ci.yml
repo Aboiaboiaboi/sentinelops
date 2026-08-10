@@ -1,14 +1,23 @@
-# Continuous integration.
+# Continuous integration, and — on a version tag only — publication.
 #
 # This file is also a finding SentinelOps reports about itself: the deployment
 # scanner's `ci` check looks for exactly `.github/workflows/`, and its absence
 # cost this project 4 points on every self-scan. Fixing it here is the project
 # taking its own advice, which is the only honest way to ship a tool like this.
 #
-# Three jobs, deliberately independent so a frontend typo does not hide a
+# Three test jobs, deliberately independent so a frontend typo does not hide a
 # backend failure behind a cancelled run. Each one reproduces a command that
 # already exists locally — nothing here is a CI-only invocation, because a check
 # a developer cannot run before pushing is a check they will learn to ignore.
+#
+# The fourth job publishes, and lives here rather than in a release.yml of its
+# own for one reason: `needs:` is the only mechanism GitHub offers that
+# *guarantees* an image is never pushed from a tag whose tests failed. Across
+# two workflow files the options are `workflow_run`, which does not carry the
+# tag that triggered it and only fires for workflow files already on the default
+# branch, or the convention "only tag a commit that was already green" — which
+# is a rule about people, not a gate. A separate file would be tidier and this
+# is not a place to buy tidiness with a hole.
 
 name: CI
 
@@ -23,10 +32,13 @@ permissions:
   contents: read
 
 # A newer push to the same branch makes the older run irrelevant. `main` is
-# excluded from cancellation so the history of what passed on it stays complete.
+# excluded from cancellation so the history of what passed on it stays complete,
+# and tags are excluded because a cancelled tag run is a half-published release
+# — the images for one target pushed and the other not.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   # Pinned to the version the runtime image copies from ghcr, so CI resolves
@@ -65,6 +77,10 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@localhost:5432/sentinelops
       ENVIRONMENT: test
+      # Points the Cloud Storage tests at the emulator started below. Without
+      # it they skip, and a skipped test that only ever runs on one developer's
+      # machine is decoration.
+      STORAGE_EMULATOR_HOST: http://localhost:4443
 
     defaults:
       run:
@@ -92,6 +108,22 @@ jobs:
         # --all-extras would install neither and every check below would fail on
         # a missing command.
         run: uv sync --frozen --all-groups
+
+      - name: Start the Cloud Storage emulator
+        # fake-gcs-server implements the real GCS JSON API over HTTP, so the
+        # storage tests exercise the SDK rather than a mock of it. Started as a
+        # step rather than a `services:` container because it needs command
+        # arguments, and `services:` can only set an image, env and ports.
+        run: |
+          docker run -d --name fake-gcs -p 4443:4443 fsouza/fake-gcs-server:1.52 \
+            -scheme http -port 4443 -public-host localhost:4443
+          for _ in $(seq 1 20); do
+            curl -sf http://localhost:4443/storage/v1/b?project=test >/dev/null && exit 0
+            sleep 0.5
+          done
+          echo "the emulator never came up" >&2
+          docker logs fake-gcs >&2
+          exit 1
 
       - name: Lint
         run: uv run ruff check .
@@ -193,3 +225,104 @@ jobs:
         run: |
           docker run --rm --entrypoint git sentinelops-worker:ci --version
           docker run --rm --entrypoint docker sentinelops-worker:ci --version
+
+  publish:
+    name: Publish — ${{ matrix.target }} to GHCR
+    # A version tag and nothing else. Every push to main and every pull request
+    # still runs the three jobs above and stops there.
+    if: startsWith(github.ref, 'refs/tags/v')
+    # The gate. Without this the registry could hold an image from a tag whose
+    # test suite was red, and "what is deployed" would stop meaning "what
+    # passed".
+    needs: [backend, frontend, images]
+    runs-on: ubuntu-latest
+
+    # Raised only for this job, not at the top of the file. Every other job in
+    # here handles code from pull requests, and a token that can write packages
+    # has no business being in scope while doing so.
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      # The two images diverge — the worker carries git and the docker client —
+      # so they are two packages, built in parallel. fail-fast off: one target
+      # failing should not cancel the other mid-push and leave the release
+      # half-published.
+      fail-fast: false
+      matrix:
+        target: [api, worker]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # No secret to manage. GITHUB_TOKEN is minted per run, expires with
+          # it, and the `packages: write` above is the whole of what it can do —
+          # which is why GHCR is the one registry in this design that needs no
+          # federation setup. A personal access token stored as a repository
+          # secret would be a long-lived credential doing the same job worse.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image name
+        id: image
+        # GHCR rejects an uppercase path, and this account's owner name has a
+        # capital in it — so the obvious ghcr.io/${{ github.repository_owner }}
+        # fails at push time with a message about an invalid reference rather
+        # than about case.
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/${owner}/sentinelops-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          # Two tags, both immutable, and deliberately no `latest`. A moving tag
+          # makes "which image is running in production" unanswerable after the
+          # fact, and it is how a rollback quietly redeploys the thing it was
+          # rolling back from. The deploy in milestone 5 references a digest;
+          # these exist so a person can find the image.
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=long
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: ${{ matrix.target }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # OCI labels recording the commit, the source repository and the build
+          # time, so the image can say where it came from without a lookup.
+          labels: ${{ steps.meta.outputs.labels }}
+          # Read-only against the cache the `images` job filled with mode=max
+          # earlier in this same run. So this is a cache hit and a push, not a
+          # second build — and it must not write, because two matrix legs
+          # exporting to the same gha cache scope race each other.
+          cache-from: type=gha
+          # Off, so what lands under the tag is a plain image manifest rather
+          # than an OCI index wrapping the image and a provenance attestation.
+          # Nothing consumes an attestation here yet, and an index is the shape
+          # that has historically surprised registries and runtimes that expect
+          # a single manifest. Worth turning on once something verifies it.
+          provenance: false
+
+      - name: Record the digest
+        # The digest is what milestone 5 deploys and what a rollback names.
+        # Printed into the run summary so it survives as a readable record
+        # rather than only inside the registry.
+        run: |
+          echo "### ${{ matrix.target }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.image.outputs.name }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
