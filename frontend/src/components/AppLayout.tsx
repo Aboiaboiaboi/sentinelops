@@ -1,9 +1,24 @@
 import { Suspense } from 'react';
-import { Link, Outlet } from 'react-router-dom';
+import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useLogout, useSession } from '@/hooks/useAuth';
 
 export function AppLayout() {
+  const navigate = useNavigate();
+  const session = useSession();
+  const logout = useLogout();
+
+  function handleLogout() {
+    // Navigating only after the server has cleared the cookie. Going first
+    // would land on the login page with the session still live, and any
+    // back-navigation would walk straight back into the app.
+    logout.mutate(undefined, {
+      onSuccess: () => navigate('/login', { replace: true }),
+    });
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b">
@@ -12,6 +27,27 @@ export function AppLayout() {
             <ShieldCheck className="size-5 text-primary-bright" />
             SentinelOps
           </Link>
+
+          <div className="ml-auto flex items-center gap-3">
+            {logout.isError && (
+              <span role="alert" className="text-sm text-destructive">
+                Could not sign out.
+              </span>
+            )}
+            {session.data && (
+              <span className="hidden text-sm text-muted-foreground sm:inline">
+                {session.data.email}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleLogout}
+              disabled={logout.isPending}
+            >
+              {logout.isPending ? 'Signing out…' : 'Sign out'}
+            </Button>
+          </div>
         </div>
       </header>
 

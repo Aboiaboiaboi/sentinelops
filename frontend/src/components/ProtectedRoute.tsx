@@ -1,22 +1,27 @@
 import { useEffect } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useSession } from '@/hooks/useAuth';
 import { subscribeToUnauthorized } from '@/lib/queryClient';
 import { safeRedirect } from '@/lib/redirect';
 
 /**
  * Route guard for cookie-based auth.
  *
- * With an httpOnly cookie there is nothing readable to check up front, and the
- * API has no /auth/me — so this cannot pre-verify a session. Instead it
- * renders optimistically and reacts when any request comes back 401, which the
- * query client broadcasts. See lib/queryClient.ts.
+ * Two mechanisms, and both are needed. `useSession` answers "is there a session
+ * *now*" by asking /auth/me, which is the only way to know before rendering —
+ * the cookie is httpOnly and unreadable from here. The 401 subscription then
+ * catches a session that dies *while* the app is open, which no up-front check
+ * can see.
  *
- * Consequence worth knowing: a logged-out user briefly sees the page skeleton
- * before being bounced. A session endpoint would remove that flash.
+ * Before /auth/me existed this rendered optimistically and waited to be told
+ * 401 by some other request, so a returning visitor with a dead cookie saw the
+ * page skeleton before being bounced.
  */
 export function ProtectedRoute() {
   const navigate = useNavigate();
   const location = useLocation();
+  const session = useSession();
 
   useEffect(
     () =>
@@ -35,6 +40,30 @@ export function ProtectedRoute() {
       }),
     [navigate, location.pathname],
   );
+
+  // The session request is one round trip on a cold load and cached from then
+  // on. Rendering the route underneath in the meantime would show a skeleton
+  // that might be replaced by the login page a moment later, which is the flash
+  // this endpoint was added to remove.
+  if (session.isPending) {
+    // This sits *above* AppLayout in the route tree, so there is no header to
+    // fill in behind — the placeholder has to supply its own page shell.
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-5xl px-4 py-8">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </div>
+    );
+  }
+
+  // Only `null` means "no session". A network failure leaves `data` undefined
+  // and `isError` set — that is the API being unreachable, not the user being
+  // signed out, and bouncing to a login page that also cannot reach the API
+  // would replace a legible error with a confusing one.
+  if (session.data === null) {
+    return <Navigate to="/login" replace state={{ from: safeRedirect(location.pathname) }} />;
+  }
 
   return <Outlet />;
 }

@@ -1,4 +1,4 @@
-"""Tests for POST /auth/signup and POST /auth/login.
+"""Tests for the /auth endpoints.
 
 These assert the wire contract the frontend depends on, not just that the
 endpoints work — field names, status codes, and the cookie flags are all things
@@ -162,3 +162,102 @@ class TestLogin:
         )
 
         assert response.status_code == 200
+
+
+class TestMe:
+    async def test_returns_the_signed_in_user(self, client: AsyncClient) -> None:
+        await client.post("/auth/signup", json=CREDENTIALS)
+
+        response = await client.get("/auth/me")
+
+        assert response.status_code == 200
+        assert response.json()["email"] == CREDENTIALS["email"]
+
+    async def test_shape_matches_login_and_signup(self, client: AsyncClient) -> None:
+        """The frontend caches whichever of the three it saw last, so a field
+        present in one and missing from another would break on refresh only."""
+        signup = await client.post("/auth/signup", json=CREDENTIALS)
+
+        response = await client.get("/auth/me")
+
+        assert response.json() == signup.json()
+        assert set(response.json()) == {"id", "email", "created_at"}
+
+    async def test_without_a_cookie_is_401(self, client: AsyncClient) -> None:
+        response = await client.get("/auth/me")
+
+        assert response.status_code == 401
+
+    async def test_with_a_forged_cookie_is_401(self, client: AsyncClient) -> None:
+        client.cookies.set(COOKIE_NAME, "not.a.jwt")
+
+        response = await client.get("/auth/me")
+
+        assert response.status_code == 401
+
+    async def test_deleted_account_is_401(self, client: AsyncClient, session: AsyncSession) -> None:
+        """A valid signature is not a valid session. The token outlives the row
+        it names, and nothing else would notice until it expired on its own."""
+        await client.post("/auth/signup", json=CREDENTIALS)
+        user = await session.scalar(select(User).where(User.email == CREDENTIALS["email"]))
+        assert user is not None
+        await session.delete(user)
+        await session.commit()
+
+        response = await client.get("/auth/me")
+
+        assert response.status_code == 401
+
+    async def test_never_exposes_the_password(self, client: AsyncClient) -> None:
+        await client.post("/auth/signup", json=CREDENTIALS)
+
+        response = await client.get("/auth/me")
+
+        assert "password_hash" not in response.text
+
+
+class TestLogout:
+    async def test_returns_204_with_no_body(self, client: AsyncClient) -> None:
+        await client.post("/auth/signup", json=CREDENTIALS)
+
+        response = await client.post("/auth/logout")
+
+        assert response.status_code == 204
+        assert response.content == b""
+
+    async def test_the_session_is_actually_over(self, client: AsyncClient) -> None:
+        """The assertion that matters: the client's own jar, after a real
+        logout, no longer authenticates. Checking the header alone would pass
+        against a cookie the browser never replaces."""
+        await client.post("/auth/signup", json=CREDENTIALS)
+        assert (await client.get("/auth/me")).status_code == 200
+
+        await client.post("/auth/logout")
+
+        assert (await client.get("/auth/me")).status_code == 401
+
+    async def test_clears_the_cookie_on_the_path_that_issued_it(self, client: AsyncClient) -> None:
+        """A delete on a different path adds a second cookie instead of
+        removing the first, and the original keeps being sent."""
+        signup = await client.post("/auth/signup", json=CREDENTIALS)
+
+        response = await client.post("/auth/logout")
+
+        attrs = _cookie_attrs(response)
+        assert attrs[COOKIE_NAME] == '""'
+        assert attrs["path"] == _cookie_attrs(signup)["path"]
+        assert attrs["max-age"] == "0"
+
+    async def test_without_a_session_is_still_204(self, client: AsyncClient) -> None:
+        """401 here would refuse to clear the cookie in the one case where the
+        caller most needs it gone."""
+        response = await client.post("/auth/logout")
+
+        assert response.status_code == 204
+
+    async def test_with_a_forged_cookie_is_still_204(self, client: AsyncClient) -> None:
+        client.cookies.set(COOKIE_NAME, "not.a.jwt")
+
+        response = await client.post("/auth/logout")
+
+        assert response.status_code == 204

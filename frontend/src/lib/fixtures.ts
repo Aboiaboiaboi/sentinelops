@@ -15,7 +15,7 @@ import { ApiError } from '@/api/client';
 import type { CheckResult, ScanComparison } from '@/types/check';
 import type { Finding } from '@/types/finding';
 import type { GitHubInstallation, GitHubRepository } from '@/types/github';
-import type { CreateProjectInput, Project, UpdateProjectInput } from '@/types/project';
+import type { CreateProjectInput, Project, UpdateProjectInput, User } from '@/types/project';
 import type { CategoryStatusMap, ScanSummary } from '@/types/scan';
 
 export const USE_FIXTURES = import.meta.env.VITE_USE_FIXTURES === 'true';
@@ -113,6 +113,19 @@ interface ScanRecord {
 
 let nextId = 1;
 const newId = (prefix: string) => `${prefix}_${nextId++}`;
+
+/**
+ * The account every fixture record belongs to — `user_id: 'user_demo'` below.
+ *
+ * Needed once the app checks its session before rendering a protected route: in
+ * fixture mode there is no cookie and no API, so an unanswerable `/auth/me`
+ * would bounce the demo straight back to the login screen.
+ */
+const DEMO_USER: User = {
+  id: 'user_demo',
+  email: 'founder@sentinelops.dev',
+  created_at: new Date(Date.now() - 86_400_000 * 30).toISOString(),
+};
 
 const projects: Project[] = [
   {
@@ -242,6 +255,11 @@ function isFinished(scanId: string): boolean {
  * calling it cannot tell the difference between this and a real backend.
  */
 export const store = {
+  /** Always signed in. There is no cookie to expire in a demo. */
+  getSession: () => delay(DEMO_USER),
+
+  logout: () => delay(null),
+
   listProjects: () => delay([...projects]),
 
   getProject: (projectId: string) => delay(requireProject(projectId)),

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import COOKIE_NAME, DbSession
+from app.api.deps import COOKIE_NAME, CurrentUser, DbSession
 from app.auth.jwt import create_access_token
 from app.auth.security import hash_password, verify_password
 from app.config import get_settings
@@ -54,6 +54,26 @@ def _issue_auth_cookie(response: Response, user_id: uuid.UUID) -> None:
     )
 
 
+def _clear_auth_cookie(response: Response) -> None:
+    """Expire the session cookie.
+
+    Every attribute that takes part in cookie matching has to repeat what
+    `_issue_auth_cookie` set — a delete with a different `path` writes a second
+    cookie instead of removing the first, and the browser keeps sending the
+    original. `path="/"` is the one that matters here; the rest are set for the
+    same reason the issuing side sets them, so the two cannot drift apart
+    unnoticed.
+    """
+    settings = get_settings()
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
 @router.post("/signup", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 # Limits account creation from one address. Looser than login because a
 # legitimate person may genuinely retry after a validation error.
@@ -88,6 +108,40 @@ async def signup(
 
     _issue_auth_cookie(response, user.id)
     return user
+
+
+@router.get("/me", response_model=UserRead)
+# Deliberately not rate limited, unlike the two endpoints below. Those exist to
+# be ground against — this one is a primary-key lookup behind a signature check,
+# and it is the first call the app makes on every page load. A limit here would
+# throttle ordinary refreshing before it slowed an attacker who, by definition,
+# already has a valid cookie.
+async def me(user: CurrentUser) -> User:
+    """Who the current cookie belongs to.
+
+    The cookie is httpOnly, so after a refresh the frontend has no way to answer
+    this for itself; without this endpoint the only way to discover a dead
+    session is to make some other request and be told 401 — which meant every
+    returning visitor saw a page skeleton before being bounced to login.
+
+    Returns the same 401 as every other authenticated route, from the same
+    dependency, so a missing cookie, a bad signature and a deleted account stay
+    indistinguishable.
+    """
+    return user
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response) -> None:
+    """Expire the session cookie. Always succeeds.
+
+    Not behind `CurrentUser`, on purpose. Logging out with an expired or
+    malformed cookie would then answer 401 and leave that cookie in place — the
+    one situation where the caller most wants it gone. There is nothing to
+    protect either: the only effect is on the caller's own browser, and the
+    server holds no session state to destroy, because the JWT is the session.
+    """
+    _clear_auth_cookie(response)
 
 
 @router.post("/login", response_model=UserRead)
