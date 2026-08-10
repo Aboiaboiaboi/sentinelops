@@ -44,32 +44,11 @@ Deployment reached full marks on this run because the CI pipeline the scanner
 kept asking for now exists. That check went from failing to passing without
 anybody special-casing it — the repository changed, so the score did.
 
-The three points Security lost are a real advisory against a version this
-project pins, found by Trivy on the run above — not an illustration:
-
-> **Dependencies have known vulnerabilities** · HIGH · −3
-> react-router 7.18.2 is affected by GHSA-qwww-vcr4-c8h2 (high). React Router:
-> RSC Mode CSRF Bypass Allows Action Execution Before 400 Response. These are
-> published, catalogued weaknesses in versions this project pins — which means
-> they are as available to an attacker as they are to you.
->
-> **Recommendation:** Upgrade react-router to 8.3.0 or later, then re-scan. If
-> the upgrade is not straightforward, record why and track it.
-
-That finding got *worse* on purpose, and the story is the honest one. This
-project was on `react-router@6.30.4`, which carried three moderate advisories —
-two of them open redirects in `useNavigate`, which is code this app actually
-uses. Upgrading to `7.18.2` closed all three and introduced one high-severity
-advisory in React Router's **RSC mode**, which needs a server runtime this
-client-only SPA does not have. Clearing it completely means `react-router@8.3.0`,
-which requires React ≥19.2.7 and Node ≥22.22 — a framework upgrade, not a
-dependency bump, and its own piece of work.
-
-So the score went 90 → 89 for a change that reduced real risk, then 89 → 93
-when CI landed. That is the scanner being right rather than being flattering:
-the vulnerable code is genuinely installed, and *reachability is a judgement the
-tool should not quietly make on your behalf*. Suppressing the finding was the
-tempting option and it is the one this project exists to argue against.
+The three points Security lost are a published advisory against a dependency
+this project pins, found by Trivy on the run above. It is reported rather than
+suppressed, because whether the affected code path is reachable is a judgement
+the tool should not quietly make on your behalf — and suppressing it was the
+tempting option this project exists to argue against.
 
 Each finding tells you what it found and what to do:
 
@@ -603,6 +582,30 @@ security shouldn't use an XSS-readable token store. Login runs in constant time
 whether or not the account exists, so it can't be used to enumerate users. Auth
 endpoints are rate limited.
 
+### How much of this is tied to one cloud
+
+Not "cloud agnostic" — that claim is usually either false or expensive. What
+this is instead is **confined**, and the surface is small enough to name
+exactly.
+
+| Tier | What it is | What moving costs |
+|---|---|---|
+| **Confined** | Three modules — `utils/queue.py`, `utils/storage.py`, `utils/sandbox.py` — are the only places allowed to know about an execution backend or a cloud SDK. Each is a Protocol with a real implementation, a refusing default, and a `set_x()` called once at startup | A new class in one file. Nothing in `api/`, `services/` or `scanners/` changes, because none of them can name a bucket or start a container |
+| **Substitutable** | Postgres and Redis | A connection string. Cloud SQL, RDS, Neon, Upstash or a container are the same two protocols behind different hostnames |
+| **Actually locked in** | The sandbox implementation, and the infrastructure definitions | Cloud Run Jobs has no cross-provider equivalent, so a second target means a second `SandboxRunner`. Infrastructure code is provider-specific by nature — that is what it is for, not a leak |
+
+Two rules keep the first row honest rather than aspirational. **No cloud SDK is
+a default dependency** — the ones that exist live in optional dependency groups
+and are imported inside the class that needs them, so an install with none of
+them present still runs, still tests, and fails loudly at the boundary rather
+than silently at import. And **the application never names a project, a region
+or a bucket**: those arrive as environment variables, set by the infrastructure
+that created them.
+
+The honest summary is that a move to another provider is one storage class, one
+sandbox class, and a rewrite of the deployment definitions — not a redesign.
+That is a smaller claim than agnosticism and it is one you can check.
+
 ---
 
 ## Roadmap
@@ -640,6 +643,12 @@ suite against a real PostgreSQL service; frontend lint, types, tests and build;
 and both container images built and then *started*, because a missing runtime
 dependency is invisible to `docker build` and fatal on first run — which is
 exactly how this project once shipped two images that crashed on import.
+
+On a `v*` tag, and only once all three have passed, a fourth job publishes the
+API and worker images to GHCR. They carry the version and the full commit SHA
+and deliberately no `latest`: a moving tag makes "which image is running" a
+question nobody can answer afterwards, and it is how a rollback quietly
+redeploys the thing it was rolling back from.
 
 ## Stack
 
