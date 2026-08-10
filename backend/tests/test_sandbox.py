@@ -11,8 +11,11 @@ is no daemon to run it against.
 """
 
 import functools
+import shutil
 import subprocess
+import tempfile
 import threading
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -688,9 +691,41 @@ requires_docker = pytest.mark.skipif(
 )
 
 
+@pytest.fixture
+def sandbox_checkout() -> Iterator[Path]:
+    """A checkout the sandbox user can actually read.
+
+    Not `tmp_path`, and this is the whole reason the fixture exists. pytest
+    creates every level of its temporary tree with mode 0700, and the sandbox
+    runs as uid 65534 — which cannot traverse a 0700 directory owned by someone
+    else, so the bind mount is there and unreadable. The container reports
+    `cat: can't open '/repo/hello.txt': Permission denied` and exits 0, because
+    the shell's last command succeeded.
+
+    `app/workers/repo.py` already knows this: it calls mkdtemp and then chmods
+    the workspace to 0755, with a comment recording that Gitleaks once failed
+    exactly this way and reported an empty result — a repository with no secrets
+    in it. This fixture does the same thing for the same reason, so the test
+    exercises the arrangement production actually uses.
+
+    None of it reproduces on Windows, where Docker Desktop's bind-mount
+    translation does not carry Linux ownership and every file reads as
+    world-readable. The test passed locally for years and had simply never run
+    on Linux.
+    """
+    # Under the system temp root rather than pytest's, because chmod on the
+    # leaf is not enough: traversal needs the execute bit on every ancestor.
+    root = Path(tempfile.mkdtemp(prefix="sentinelops-sandbox-"))
+    root.chmod(0o755)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 @requires_docker
 def test_a_real_container_reads_the_checkout_and_cannot_reach_the_network(
-    tmp_path: Path,
+    sandbox_checkout: Path,
 ) -> None:
     """The one test that proves the flags do what the others assert they say.
 
@@ -698,7 +733,11 @@ def test_a_real_container_reads_the_checkout_and_cannot_reach_the_network(
     and calls it clean, and a sandbox that can reach the network can send that
     repository somewhere.
     """
-    (tmp_path / "hello.txt").write_text("scanned", encoding="utf-8")
+    hello = sandbox_checkout / "hello.txt"
+    hello.write_text("scanned", encoding="utf-8")
+    # Explicit rather than inherited from the umask, so the test states what it
+    # requires instead of depending on how the runner is configured.
+    hello.chmod(0o644)
 
     result = DockerSandbox().run(
         SandboxSpec(
@@ -712,7 +751,7 @@ def test_a_real_container_reads_the_checkout_and_cannot_reach_the_network(
             ),
             timeout_seconds=120,
         ),
-        repo_path=tmp_path,
+        repo_path=sandbox_checkout,
     )
 
     assert result.exit_code == 0, result.stderr
