@@ -76,7 +76,16 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@localhost:5432/sentinelops
-      ENVIRONMENT: test
+      # No ENVIRONMENT here, deliberately. It used to say `test`, which is not a
+      # value the setting accepts — `environment` is a Literal of development
+      # and production, so Settings() raised at import and conftest could not
+      # load. Every backend run failed at collection.
+      #
+      # The fix is to delete it rather than to add a third literal. A `test`
+      # environment would exist only in CI, and the rule at the top of this file
+      # is that nothing here is a CI-only invocation. Unset means `development`,
+      # which is what the suite runs as locally — so CI now reproduces the local
+      # run instead of a mode nobody else ever exercises.
       # Points the Cloud Storage tests at the emulator started below. Without
       # it they skip, and a skipped test that only ever runs on one developer's
       # machine is decoration.
