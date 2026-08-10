@@ -294,14 +294,21 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.name }}
-          # Two tags, both immutable, and deliberately no `latest`. A moving tag
-          # makes "which image is running in production" unanswerable after the
-          # fact, and it is how a rollback quietly redeploys the thing it was
-          # rolling back from. The deploy in milestone 5 references a digest;
-          # these exist so a person can find the image.
+          # Two tags, both immutable. A moving tag makes "which image is running
+          # in production" unanswerable after the fact, and it is how a rollback
+          # quietly redeploys the thing it was rolling back from. The deploy in
+          # milestone 5 references a digest; these exist so a person can find
+          # the image.
           tags: |
             type=semver,pattern={{version}}
             type=sha,format=long
+          # `latest=false` is not redundant, which the first release proved: the
+          # action defaults to `latest=auto`, which appends `latest` for any
+          # non-prerelease semver tag *regardless of the list above*. v0.51.0
+          # published `0.51.0`, `sha-…` and a `latest` nobody asked for, while
+          # the comment above claimed there was no such tag. Configuration that
+          # disagrees with its own comment is worse than either alone.
+          flavor: latest=false
 
       - name: Build and push
         id: push
