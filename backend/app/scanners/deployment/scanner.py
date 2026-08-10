@@ -19,6 +19,7 @@ from app.scanners.base import (
     RepositoryIndex,
     ScanFinding,
     Severity,
+    code_only,
     failed,
     passed,
     skipped,
@@ -31,6 +32,8 @@ _PINNING = CheckSpec("deployment.image_pinning", "Pinned base images")
 _NON_ROOT = CheckSpec("deployment.non_root", "Container drops privileges")
 _HEALTHCHECK = CheckSpec("deployment.healthcheck", "Container healthcheck")
 _DOCKERIGNORE = CheckSpec("deployment.dockerignore", "Build context excluded")
+_SIGNALS = CheckSpec("deployment.signal_handling", "Container receives stop signals")
+_PRIVILEGED = CheckSpec("deployment.privileged", "Host isolation preserved")
 _CI = CheckSpec("deployment.ci", "CI pipeline")
 
 # The image checks read Dockerfile stages, so without one there is nothing to
@@ -38,14 +41,22 @@ _CI = CheckSpec("deployment.ci", "CI pipeline")
 _NO_DOCKERFILE = "no Dockerfile was found to inspect"
 
 # Impacts. Both paths through the checks below total the category weight of 15:
-# a repository with no deployment config at all loses 11 + 4, and one with a
-# Dockerfile can lose 3 + 4 + 2 + 4 + 2.
-_NO_DEPLOYMENT_CONFIG = 11
+# a repository with no deployment config at all loses 12 + 3, and one with a
+# Dockerfile and orchestration can lose 3 + 4 + 1 + 3 + 1 + 2 + 1.
+#
+# Rebalanced when the signal-handling and privileged checks were added. The
+# weight has to come from somewhere, and it came from the two findings about
+# what ends up in the image rather than from the two about reproducibility and
+# privilege — a wedged container and a fat layer are both recoverable, and
+# neither is somebody owning the host.
+_NO_DEPLOYMENT_CONFIG = 12
 _UNPINNED_BASE_IMAGE = 3
 _RUNS_AS_ROOT = 4
-_NO_HEALTHCHECK = 2
-_NO_CI_PIPELINE = 4
-_NO_DOCKERIGNORE = 2
+_NO_HEALTHCHECK = 1
+_NO_CI_PIPELINE = 3
+_NO_DOCKERIGNORE = 1
+_PRIVILEGED_CONTAINER = 2
+_SHELL_FORM_ENTRYPOINT = 1
 
 _DOCKERFILE_NAMES = ("dockerfile",)
 _COMPOSE_NAMES = (
@@ -61,6 +72,16 @@ _COMPOSE_NAMES = (
 _ORCHESTRATION_DIRECTORIES = frozenset(
     {"k8s", "kubernetes", "manifests", "deploy", "deployment", "helm", "charts"}
 )
+
+# Only these get read for the privilege check. A directory can be recognised as
+# orchestration because of a README sitting in it; a manifest is YAML.
+_MANIFEST_SUFFIXES = frozenset({".yml", ".yaml"})
+
+# A ceiling on how many manifests are read. A Helm chart or a Kustomize tree can
+# hold hundreds of templates, and the question here is answered by the first
+# offending line — reading the whole tree would cost more than the answer is
+# worth. The same reasoning as MAX_READ_BYTES one level up.
+_MAX_MANIFESTS = 50
 
 # CI providers that keep their config in a directory. Matched on the path
 # prefix so that an *empty* .github/workflows/ does not count — a directory with
@@ -234,6 +255,91 @@ def _copies_full_context(stage: _Stage) -> bool:
     return False
 
 
+# Shell-form CMD/ENTRYPOINT wrappers that do forward signals, so the process
+# below them still gets SIGTERM. `exec` replaces the shell entirely; the rest are
+# init processes written for exactly this problem.
+_SIGNAL_SAFE_ENTRYPOINTS = frozenset(
+    {"exec", "tini", "dumb-init", "supervisord", "s6-svscan", "runit", "catatonit"}
+)
+
+
+def _shell_form_entry(stage: _Stage) -> str | None:
+    """The stage's effective entry instruction, if it is shell form.
+
+    ENTRYPOINT wins over CMD: when both are present, CMD supplies arguments to
+    it rather than starting anything, so a shell-form CMD beneath an exec-form
+    ENTRYPOINT is correct and must not be flagged.
+
+    Shell form means the process runs as a child of `/bin/sh -c`, which does not
+    forward SIGTERM to it. Returns the offending instruction for the finding to
+    quote, or None.
+    """
+    lines = stage.instructions.get("entrypoint") or stage.instructions.get("cmd")
+    if not lines:
+        return None
+
+    # The last one wins, the same rule as USER.
+    instruction = lines[-1]
+    _, _, argument = instruction.partition(" ")
+    argument = argument.strip()
+    if not argument or argument.startswith("["):
+        return None
+
+    first_word = argument.split(None, 1)[0].strip("\"'")
+    # Basename, so /sbin/tini and /usr/bin/dumb-init are recognised too.
+    if first_word.rsplit("/", 1)[-1] in _SIGNAL_SAFE_ENTRYPOINTS:
+        return None
+    return instruction
+
+
+# The four ways a committed deployment file hands a container authority over the
+# machine it runs on. Written to match both Compose and Kubernetes, because
+# `privileged: true` is spelled identically in each and matching text is honest
+# about what this check is — a line scan, not a YAML parser.
+_HOST_ACCESS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"^\s*-?\s*privileged\s*:\s*[\"']?(?:true|yes)[\"']?\s*$", re.IGNORECASE),
+        "runs privileged, which grants every capability and the host's devices",
+    ),
+    (
+        re.compile(r"/var/run/docker\.sock"),
+        "mounts the Docker socket, which is root on the host machine",
+    ),
+    (
+        re.compile(r"^\s*-?\s*network_mode\s*:\s*[\"']?host[\"']?\s*$", re.IGNORECASE),
+        "shares the host's network namespace",
+    ),
+    (
+        re.compile(r"^\s*-?\s*hostNetwork\s*:\s*[\"']?true[\"']?\s*$", re.IGNORECASE),
+        "shares the host's network namespace",
+    ),
+    (
+        re.compile(r"^\s*-\s*[\"']?SYS_ADMIN[\"']?\s*$", re.IGNORECASE),
+        "adds SYS_ADMIN, the capability that makes container escape routine",
+    ),
+)
+
+
+def _host_access(content: str) -> str | None:
+    """The first host-level grant in a deployment file, described, or None.
+
+    Comments are stripped before matching, and that is not a detail: a file
+    explaining *why* it mounts the Docker socket contains the string
+    `/var/run/docker.sock` in prose, and reporting the warning as the offence
+    would punish the projects that documented themselves.
+
+    Narrow capabilities — NET_ADMIN, NET_BIND_SERVICE, SYS_PTRACE — are
+    deliberately not matched. Those are the capability model being used
+    correctly, and flagging them would penalise the careful alternative to the
+    blunt instrument this check is actually looking for.
+    """
+    for line in code_only(content).splitlines():
+        for pattern, description in _HOST_ACCESS_PATTERNS:
+            if pattern.search(line):
+                return description
+    return None
+
+
 def _runs_as_root(stage: _Stage) -> bool:
     users = stage.instructions.get("user", [])
     if not users:
@@ -246,7 +352,7 @@ def _runs_as_root(stage: _Stage) -> bool:
 
 class DeploymentScanner:
     category = CATEGORY
-    CHECKS = (_CONFIG, _PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE, _CI)
+    CHECKS = (_CONFIG, _PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE, _SIGNALS, _PRIVILEGED, _CI)
 
     def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         # Both questions answered in one pass over the already-built index.
@@ -255,6 +361,7 @@ class DeploymentScanner:
         # dozen times per scan.
         dockerfiles: list[Path] = []
         compose_files: list[Path] = []
+        manifest_files: list[Path] = []
         has_orchestration = False
         for path in repo.files:
             if _is_dockerfile(path):
@@ -263,8 +370,18 @@ class DeploymentScanner:
             if path.name.lower() in _COMPOSE_NAMES:
                 compose_files.append(path)
                 has_orchestration = True
-            elif not has_orchestration and _is_orchestration(path, repo.path):
+                continue
+            # No longer short-circuited once orchestration is found: the
+            # privilege check needs the manifests themselves, not just the fact
+            # that some exist. The test is string work on an already-walked
+            # path, so it costs no additional I/O.
+            if _is_orchestration(path, repo.path):
                 has_orchestration = True
+                if (
+                    path.suffix.lower() in _MANIFEST_SUFFIXES
+                    and len(manifest_files) < _MAX_MANIFESTS
+                ):
+                    manifest_files.append(path)
 
         results: list[CheckResult] = []
         if not dockerfiles and not has_orchestration:
@@ -275,12 +392,15 @@ class DeploymentScanner:
             no_config = "no deployment configuration was found to inspect"
             results.extend(
                 skipped(check, no_config)
-                for check in (_PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE)
+                for check in (_PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE, _SIGNALS)
             )
         else:
             results.append(passed(_CONFIG))
             results.extend(self._check_images(dockerfiles, compose_files, repo))
 
+        # Outside the branch: it reads orchestration rather than the image, and
+        # it answers for itself when there is none.
+        results.append(self._check_privileged(compose_files, manifest_files, repo))
         results.append(self._check_ci(repo))
         return results
 
@@ -309,6 +429,7 @@ class DeploymentScanner:
         healthchecked = False
         runnable_seen = False
         broad_copy: str | None = None
+        shell_entry: tuple[str, str] | None = None
 
         for path in dockerfiles:
             relative = repo.relative(path)
@@ -327,6 +448,10 @@ class DeploymentScanner:
                     root_stages.append(f"{relative} ({stage.name or stage.base})")
                 if "healthcheck" in stage.instructions:
                     healthchecked = True
+                if shell_entry is None:
+                    instruction = _shell_form_entry(stage)
+                    if instruction is not None:
+                        shell_entry = (relative, instruction)
 
         # The same pinning question asked of Compose: `image: postgres` pulls
         # a different database on different days, exactly like a floating FROM.
@@ -398,12 +523,14 @@ class DeploymentScanner:
         if not dockerfiles:
             results.append(skipped(_NON_ROOT, _NO_DOCKERFILE))
             results.append(skipped(_HEALTHCHECK, _NO_DOCKERFILE))
+            results.append(skipped(_SIGNALS, _NO_DOCKERFILE))
             return results
 
         if not runnable_seen:
             no_process = "no stage in the Dockerfile starts a process"
             results.append(skipped(_NON_ROOT, no_process))
             results.append(skipped(_HEALTHCHECK, no_process))
+            results.append(skipped(_SIGNALS, no_process))
             return results
 
         if not root_stages:
@@ -455,7 +582,81 @@ class DeploymentScanner:
                     ),
                 )
             )
+
+        if shell_entry is None:
+            results.append(passed(_SIGNALS))
+        else:
+            where, instruction = shell_entry
+            results.append(
+                failed(
+                    _SIGNALS,
+                    ScanFinding(
+                        category=CATEGORY,
+                        severity=Severity.MEDIUM,
+                        title="Container does not receive stop signals",
+                        description=(
+                            f"{where} starts its process with `{instruction}` — shell form, so the "
+                            "application runs as a child of /bin/sh, which does not forward "
+                            "SIGTERM. On every deploy and every scale-down the orchestrator asks "
+                            "the container to stop, nothing hears it, and the container is killed "
+                            "once the grace period expires — dropping whatever was in flight."
+                        ),
+                        recommendation=(
+                            "Use the JSON array form, so the process is PID 1 and receives the "
+                            'signal directly: CMD ["python", "-m", "app"]. If a shell really is '
+                            "needed, prefix the command with exec, or use an init such as tini."
+                        ),
+                        score_impact=_SHELL_FORM_ENTRYPOINT,
+                    ),
+                )
+            )
         return results
+
+    def _check_privileged(
+        self, compose_files: list[Path], manifest_files: list[Path], repo: RepositoryIndex
+    ) -> CheckResult:
+        """Whether any committed deployment file removes the container boundary.
+
+        Asked of Compose and Kubernetes together. The grants are spelled the
+        same way in both, and a repository that deploys to Kubernetes is
+        precisely the one this check exists for.
+        """
+        candidates = compose_files + manifest_files
+        if not candidates:
+            return skipped(
+                _PRIVILEGED, "no Compose file or orchestration manifest was found to inspect"
+            )
+
+        for path in candidates:
+            description = _host_access(repo.read(path))
+            if description is None:
+                continue
+            relative = repo.relative(path)
+            return failed(
+                _PRIVILEGED,
+                ScanFinding(
+                    category=CATEGORY,
+                    severity=Severity.HIGH,
+                    title="Container granted host-level access",
+                    description=(
+                        f"{relative} defines a container that {description}. The isolation "
+                        "between the container and the machine it runs on is removed, so a "
+                        "compromise of the application is a compromise of the host rather than "
+                        "of a sandbox. A development-only Compose file is the common and "
+                        "legitimate case for this — the thing worth checking is that the line "
+                        "has not been copied into whatever actually gets deployed."
+                    ),
+                    recommendation=(
+                        "Remove the grant from anything that reaches a deployed environment. "
+                        "Where the capability is genuinely needed, add only the specific one "
+                        "(cap_add: NET_ADMIN) rather than privileged, and reach a container "
+                        "runtime through its platform API instead of by mounting its socket."
+                    ),
+                    score_impact=_PRIVILEGED_CONTAINER,
+                ),
+            )
+
+        return passed(_PRIVILEGED)
 
     def _check_ci(self, repo: RepositoryIndex) -> CheckResult:
         # A CI directory only counts if it has something in it — an empty

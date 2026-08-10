@@ -197,6 +197,130 @@ class TestHealthcheck:
         assert "No container healthcheck" not in _titles(tmp_path)
 
 
+class TestSignalHandling:
+    def test_flags_a_shell_form_cmd(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Dockerfile", "FROM python:3.14-slim\nUSER app\nCMD python -m app\n")
+
+        assert "Container does not receive stop signals" in _titles(tmp_path)
+
+    def test_accepts_the_json_array_form(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Dockerfile", 'FROM python:3.14-slim\nUSER app\nCMD ["python", "-m"]\n')
+
+        assert "Container does not receive stop signals" not in _titles(tmp_path)
+
+    def test_flags_a_shell_form_entrypoint(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Dockerfile", "FROM python:3.14-slim\nUSER app\nENTRYPOINT ./run.sh\n")
+
+        assert "Container does not receive stop signals" in _titles(tmp_path)
+
+    def test_shell_form_cmd_under_an_exec_entrypoint_is_arguments_not_a_process(
+        self, tmp_path: Path
+    ) -> None:
+        """CMD supplies arguments to an exec-form ENTRYPOINT. The process is
+        still PID 1, and flagging this would hit a correct, common pattern."""
+        _write(
+            tmp_path,
+            "Dockerfile",
+            "FROM python:3.14-slim\nUSER app\n"
+            'ENTRYPOINT ["python", "-m", "app"]\nCMD --port 8000\n',
+        )
+
+        assert "Container does not receive stop signals" not in _titles(tmp_path)
+
+    @pytest.mark.parametrize(
+        "command",
+        ["exec python -m app", "tini -- python -m app", "/sbin/tini -- app", "dumb-init python"],
+    )
+    def test_accepts_wrappers_that_forward_signals(self, tmp_path: Path, command: str) -> None:
+        _write(tmp_path, "Dockerfile", f"FROM python:3.14-slim\nUSER app\nCMD {command}\n")
+
+        assert "Container does not receive stop signals" not in _titles(tmp_path)
+
+    def test_a_builder_stage_is_not_a_shipped_process(self, tmp_path: Path) -> None:
+        _write(tmp_path, "Dockerfile", GOOD_DOCKERFILE)
+
+        assert "Container does not receive stop signals" not in _titles(tmp_path)
+
+
+class TestPrivilegedContainer:
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "    privileged: true",
+            '    privileged: "true"',
+            "      - /var/run/docker.sock:/var/run/docker.sock",
+            "    network_mode: host",
+        ],
+    )
+    def test_flags_a_compose_service_with_host_access(self, tmp_path: Path, line: str) -> None:
+        _write(tmp_path, "docker-compose.yml", f"services:\n  app:\n    image: app:1\n{line}\n")
+
+        assert "Container granted host-level access" in _titles(tmp_path)
+
+    @pytest.mark.parametrize("line", ["      privileged: true", "  hostNetwork: true"])
+    def test_flags_a_kubernetes_manifest(self, tmp_path: Path, line: str) -> None:
+        _write(tmp_path, "k8s/deployment.yaml", f"kind: Deployment\nspec:\n{line}\n")
+
+        assert "Container granted host-level access" in _titles(tmp_path)
+
+    def test_flags_sys_admin(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            "services:\n  app:\n    image: app:1\n    cap_add:\n      - SYS_ADMIN\n",
+        )
+
+        assert "Container granted host-level access" in _titles(tmp_path)
+
+    @pytest.mark.parametrize("capability", ["NET_ADMIN", "NET_BIND_SERVICE", "SYS_PTRACE"])
+    def test_accepts_a_narrow_capability(self, tmp_path: Path, capability: str) -> None:
+        """The capability model used correctly. Flagging these would penalise
+        the careful alternative to the blunt instrument this check looks for."""
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            f"services:\n  app:\n    image: app:1\n    cap_add:\n      - {capability}\n",
+        )
+
+        assert "Container granted host-level access" not in _titles(tmp_path)
+
+    def test_a_comment_describing_the_risk_is_not_the_risk(self, tmp_path: Path) -> None:
+        """A file that documents why it does something dangerous contains the
+        dangerous string in prose. Reporting the warning as the offence would
+        punish the projects that explained themselves."""
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            "services:\n  app:\n    image: app:1\n"
+            "    # Never mount /var/run/docker.sock here, and never set privileged: true\n",
+        )
+
+        assert "Container granted host-level access" not in _titles(tmp_path)
+
+    def test_an_ordinary_compose_file_passes(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "docker-compose.yml",
+            "services:\n  app:\n    image: app:1\n    ports:\n      - '8000:8000'\n",
+        )
+
+        assert "Container granted host-level access" not in _titles(tmp_path)
+
+    def test_is_high_severity(self, tmp_path: Path) -> None:
+        _write(tmp_path, "docker-compose.yml", "services:\n  app:\n    privileged: true\n")
+
+        finding = next(f for f in _scan(tmp_path) if f.title.startswith("Container granted"))
+        assert finding.severity is Severity.HIGH
+
+    def test_a_dockerfile_alone_is_not_asked_the_question(self, tmp_path: Path) -> None:
+        """No orchestration means nothing declares how the container is run, so
+        the check skips rather than crediting a repository for a file it has
+        not got."""
+        _write(tmp_path, "Dockerfile", GOOD_DOCKERFILE)
+
+        assert "Container granted host-level access" not in _titles(tmp_path)
+
+
 class TestCiPipeline:
     def test_flags_a_repository_with_none(self, tmp_path: Path) -> None:
         _write(tmp_path, "Dockerfile", GOOD_DOCKERFILE)
