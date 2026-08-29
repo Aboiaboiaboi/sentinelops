@@ -28,32 +28,25 @@ Here is SentinelOps scanning **itself**, which is the real output of the
 commands below rather than an illustration:
 
 ```
-sentinelops                                        88 / 100    Grade B
+sentinelops                                        94 / 100    Grade A
 6 of 6 categories reported
-31 checks: 23 passed · 4 skipped · 4 failed
+31 checks: 25 passed · 4 skipped · 2 failed
 
-  Security         22 / 25   ██████████████████░░
-  Architecture     17 / 20   █████████████████░░░
+  Security         25 / 25   ████████████████████
+  Architecture     20 / 20   ████████████████████
   Reliability      20 / 20   ████████████████████
   Deployment       13 / 15   █████████████████░░░
   Scalability      10 / 10   ████████████████████
   Observability     6 / 10   ████████████░░░░░░░░
 ```
 
-Deployment lost two points on this run for a real reason, not a stale one:
-`docker-compose.yml` mounts the Docker socket into the worker so `DockerSandbox`
-can start sibling containers for the tool-backed security checks. Root-on-the-host,
-granted deliberately, in a file marked development-only — the finding exists to
-catch exactly the case where that line gets copied into something that ships.
-Architecture lost three for a file that grew past a size anyone should be
-expected to review in one sitting. Neither is hidden or excused; both are on the
-scanner's own report about itself.
-
-The three points Security lost are a published advisory against a dependency
-this project pins, found by Trivy on the run above. It is reported rather than
-suppressed, because whether the affected code path is reachable is a judgement
-the tool should not quietly make on your behalf — and suppressing it was the
-tempting option this project exists to argue against.
+Two findings, and both are deliberate rather than overlooked. Deployment lost
+two points for a real reason: `docker-compose.yml` mounts the Docker socket
+into the worker so `DockerSandbox` can start sibling containers for the
+tool-backed security checks. Root-on-the-host, granted on purpose, in a file
+marked development-only — the finding exists to catch exactly the case where
+that line gets copied into something that ships, and it is expected to stay on
+this scoreboard permanently rather than be engineered away.
 
 Each finding tells you what it found and what to do:
 
@@ -66,10 +59,10 @@ Each finding tells you what it found and what to do:
 > health, and send unhandled exceptions to an error tracker so they are seen
 > without being hunted.
 
-All four findings are fair — a dependency upgrade this project owes, a
-development-only socket mount that must never reach a real deployment, one file
-that outgrew a single sitting's worth of review, and the missing metrics above.
-None is disputed; two are already tracked on the roadmap below.
+That one is the honest gap: real feature work, not yet built, and it is on the
+roadmap below rather than hidden. Two more findings from earlier scans — a
+vulnerable dependency and an oversized file — are already fixed, upgraded and
+split respectively, and no longer appear.
 
 Every scan is downloadable as a PDF that says the same things this page does —
 the score, the category breakdown, each finding with its recommendation, and all
@@ -649,16 +642,17 @@ than mandatory.
 Private repositories use a GitHub App rather than stored access tokens, so
 credentials expire hourly and are never persisted.
 
-Two of the findings SentinelOps reported about itself early on were its own
-missing CI and its own missing metrics. **CI is now in
+Several of the findings SentinelOps has reported about itself over time were
+its own missing CI, an unpatched dependency, an oversized file, and its own
+missing metrics. **CI is now in
 [.github/workflows/ci.yml](.github/workflows/ci.yml)** — added because the tool
 kept saying so, which is the only honest way to ship something that grades other
-people's repositories. Metrics remain deferred and are still the largest single
-deduction above. The scan shown at the top of this page reports four findings
-in total, not two — an unpatched advisory, the development-only Docker socket
-mount, one file that outgrew a single sitting's review, and the missing
-metrics — and all four are real, current, and taken from the same command
-anyone can run.
+people's repositories. The dependency was upgraded and the file was split; both
+findings are gone from the scan shown at the top of this page. Metrics remain
+deferred and are the largest deduction left — real feature work, not a fix
+that fits alongside everything else, and on the roadmap below rather than
+rushed. The Docker socket mount is the other finding still standing, and it is
+meant to: see the note above the score.
 
 The pipeline runs three independent jobs: backend lint, format and the full
 suite against a real PostgreSQL service; frontend lint, types, tests and build;
