@@ -87,12 +87,15 @@ if [ -n "$MISSING" ]; then
 fi
 
 echo "==> Building and starting the stack"
+# warm-trivy and warm-semgrep are one-shot services in the compose file
+# itself — `up` already starts, runs and exits them once, populating the
+# cache the sandboxed scan containers need. An earlier version of this script
+# ran them a second time here with `docker compose run`, which raced the
+# first pass on the same cache volume and made Semgrep's atomic rename fail
+# ("mv: can't rename ... No such file or directory") on a clean provision.
+# Fixed by trusting the one `up` already did — see the cron line below for
+# how the cache is kept current after this.
 docker compose -f docker-compose.prod.yml --env-file .env up -d --build
-
-echo "==> Warming the Trivy and Semgrep caches (needs network; the scan"
-echo "    containers do not have it)"
-docker compose -f docker-compose.prod.yml --env-file .env run --rm warm-trivy
-docker compose -f docker-compose.prod.yml --env-file .env run --rm warm-semgrep
 
 echo ""
 echo "==> Done. https://$(grep '^DOMAIN=' .env | cut -d= -f2-) should now be live"

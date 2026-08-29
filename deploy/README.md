@@ -1,11 +1,17 @@
 # Infrastructure
 
-Everything SentinelOps runs on, as code, for the one-cloud managed-services
-deployment. `deploy/compose/` next to this directory is the other path — a
-Docker Compose stack that runs on any VM on any cloud and names none of them;
-read its README instead if that is what you are looking for. This directory is
-Terraform, for all of it except the handful of things Terraform cannot create
-for itself, which is what `bootstrap.sh` is for.
+Everything SentinelOps runs on, as code — for GCP specifically. This directory
+is Terraform, for all of it except the handful of things Terraform cannot
+create for itself, which is what `bootstrap.sh` is for.
+
+**Two other directories live alongside this one.** `deploy/compose/` is the
+application layer — the Docker Compose stack that runs on any VM on any cloud
+and names none of them. `deploy/aws/` is the Terraform for the infrastructure
+underneath that stack on AWS specifically: one EC2 instance, one S3 bucket,
+the IAM role and security group around them — proportionate to what a single
+VM needs, not a port of everything below. Read whichever of those matches what
+you're actually deploying; this directory is the GCP path, currently frozen
+(see below) rather than the live one.
 
 ## Current state — read this before touching anything here
 
