@@ -14,7 +14,14 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY . .
+# Named explicitly rather than `COPY . .` — the same reasoning
+# backend/Dockerfile gives for copying `app` rather than the whole build
+# context: it is what keeps a stray local file (`.env.local`, a `dist/` from a
+# previous build) out of the image without depending on `.dockerignore` being
+# read correctly, and it is narrower than what SentinelOps's own deployment
+# scanner considers a "full context copy" finding.
+COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json ./
+COPY src ./src
 # tsc -b && vite build — the same command `npm run build` runs locally, so a
 # build that fails here would have failed on a developer's machine too.
 RUN npm run build
