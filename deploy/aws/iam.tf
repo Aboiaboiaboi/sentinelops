@@ -50,3 +50,18 @@ resource "aws_iam_instance_profile" "ec2" {
   name = "sentinelops-ec2-profile"
   role = aws_iam_role.ec2.name
 }
+
+# Lets the instance register with Systems Manager, so it can be reached via
+# `aws ssm start-session` with no open inbound port and no IP allowlist at
+# all — the agent on the instance connects outbound to AWS, and the caller
+# authenticates by IAM rather than by network reachability. This is what
+# makes personal access resilient to a changing home IP, unlike
+# ssh_allowed_cidr in network.tf, which has to be updated by hand whenever it
+# changes. SSH stays available as a second path — this is additive, not a
+# replacement — and the AWS managed policy is used as-is rather than
+# hand-rolled, since it is exactly the narrow, well-audited permission set
+# the agent needs and nothing more.
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}

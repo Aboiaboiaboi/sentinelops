@@ -24,12 +24,22 @@
 # Manual rollback: re-run this workflow from the Actions tab with a `ref`
 # input, or SSH in and run rollback.sh directly.
 #
-# Needs two things configured once, in this repository's Settings → Secrets
+# SSH access is opened and closed for the duration of this run only. A
+# GitHub-hosted runner's IP is a different address from a large, unpredictable
+# pool every single time — there is no fixed CIDR to put in the security
+# group the way a human's home IP goes in ssh_allowed_cidr (deploy/aws) — so
+# instead of leaving port 22 open to the world, this workflow discovers its
+# own current IP, authorizes exactly that /32, deploys, and revokes it again.
+# See deploy/aws/ci.tf for the identity this uses, which can do nothing else
+# in the account.
+#
+# Needs four things configured once, in this repository's Settings → Secrets
 # and variables → Actions:
-#   Secret   DEPLOY_SSH_KEY  — the private half of deploy/aws's key pair
-#   Variable DEPLOY_DOMAIN   — the instance's sslip.io domain (or a real one,
-#                              once deploy/aws/README.md's DOMAIN rotation
-#                              happens)
+#   Secret   DEPLOY_SSH_KEY             — the private half of deploy/aws's key pair
+#   Secret   DEPLOY_AWS_ACCESS_KEY_ID    — for the sentinelops-ci-deploy IAM user (deploy/aws/ci.tf)
+#   Secret   DEPLOY_AWS_SECRET_ACCESS_KEY
+#   Variable DEPLOY_DOMAIN              — the instance's sslip.io domain (or a real one,
+#                                         once deploy/aws/README.md's DOMAIN rotation happens)
 
 name: Deploy
 
@@ -52,16 +62,39 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+env:
+  AWS_DEFAULT_REGION: us-east-1
+  # deploy/aws's aws_security_group.web. Not a repository variable — it names
+  # a specific AWS resource, the same category of thing instance_id and
+  # storage_bucket are, and those are not variables either.
+  SECURITY_GROUP_ID: sg-0a36e01938dd8eb73
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Configure AWS credentials
+        run: |
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.DEPLOY_AWS_ACCESS_KEY_ID }}" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.DEPLOY_AWS_SECRET_ACCESS_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Open SSH from this runner
+        run: |
+          RUNNER_IP="$(curl -sf https://checkip.amazonaws.com)"
+          echo "RUNNER_IP=${RUNNER_IP}" >> "$GITHUB_ENV"
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SECURITY_GROUP_ID" \
+            --protocol tcp --port 22 --cidr "${RUNNER_IP}/32"
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ vars.DEPLOY_DOMAIN }}" >> ~/.ssh/known_hosts
+          for i in $(seq 1 10); do
+            ssh-keyscan -H "${{ vars.DEPLOY_DOMAIN }}" >> ~/.ssh/known_hosts 2>/dev/null && break
+            sleep 2
+          done
 
       - name: Manual rollback (workflow_dispatch with a ref only)
         if: github.event_name == 'workflow_dispatch' && inputs.ref != ''
@@ -139,3 +172,17 @@ jobs:
           ssh -i ~/.ssh/deploy_key "ubuntu@${{ vars.DEPLOY_DOMAIN }}" \
             "cd ~/sentinelops/deploy/compose && ./rollback.sh"
           echo "::error::Deploy failed and was rolled back to the last known-good commit. This run stays red — the failing push still needs fixing before it can go out again."
+
+      - name: Close SSH from this runner
+        # always(), not success()/failure(): this must run no matter what
+        # happened above, or a failed deploy leaves SSH open to this runner's
+        # IP permanently. continue-on-error so that if revoking somehow fails
+        # too, it does not mask whatever the real failure earlier in the run
+        # was — the rule is a /32 for an ephemeral runner IP either way, not
+        # a lasting exposure.
+        if: always()
+        continue-on-error: true
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$SECURITY_GROUP_ID" \
+            --protocol tcp --port 22 --cidr "${RUNNER_IP}/32"

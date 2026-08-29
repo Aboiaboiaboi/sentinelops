@@ -88,7 +88,17 @@ already.
 this is a public web app, and an SSH port reachable from the whole internet is
 a credential-stuffing target from the moment it exists. `ssh_allowed_cidr`
 needs updating (`terraform apply` after) if the deploying machine's IP
-changes.
+changes — which a home ISP's IP does, without warning. **Systems Manager
+Session Manager is the resilient alternative** for a human's own access — see
+"Two ways in" below — and needs no CIDR at all.
+
+**CI gets SSH too, without a fixed IP to allow.** A GitHub-hosted runner's
+address is a different one from a large, unpredictable pool on every single
+run, so there is no CIDR to put in `ssh_allowed_cidr` for it the way there is
+for a person. `deploy/aws/ci.tf` and `.github/workflows/deploy.yml` solve
+this by having the workflow open a `/32` rule for its own current IP at the
+start of a run and revoke it at the end — SSH stays closed to the internet
+the rest of the time. See "Two ways in" below.
 
 **The AMI is pinned, not resolved from "always latest."** `instance.tf`
 explains why at length: the project's own `deployment.image_pinning` check
@@ -113,6 +123,42 @@ is a deliberate trade against the alternative: without it, every stop/start
 the sslip.io domain, `DEPLOY_DOMAIN` in Actions, and any GitHub App callback,
 all three at once, silently, until someone notices the site is unreachable.
 
+## Two ways in
+
+**SSH**, for a human, when `ssh_allowed_cidr` matches the machine you're on:
+
+```bash
+ssh -i ~/.ssh/sentinelops-deploy.pem ubuntu@$(cd deploy/aws && terraform output -raw public_ip)
+```
+
+**Systems Manager**, which needs no open port and no IP allowlist at all —
+the instance's agent connects *outbound* to AWS, and the caller authenticates
+by IAM rather than by network reachability. Works from anywhere, survives a
+changing home IP, and is what CI effectively also relies on the shape of
+(open access by identity, not by address):
+
+```bash
+# One-off commands, no session plugin needed:
+aws ssm send-command --instance-ids i-09ef906ff63661005 --region us-east-1 \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["docker compose -f ~/sentinelops/deploy/compose/docker-compose.prod.yml ps"]'
+aws ssm get-command-invocation --command-id <id-from-above> \
+  --instance-id i-09ef906ff63661005 --region us-east-1
+
+# Interactive shell — needs the Session Manager plugin installed locally once:
+#   winget install -e --id Amazon.SessionManagerPlugin
+aws ssm start-session --target i-09ef906ff63661005 --region us-east-1
+```
+
+Granted by `aws_iam_role_policy_attachment.ssm` in `iam.tf`, attaching AWS's
+own `AmazonSSMManagedInstanceCore` managed policy to the instance's existing
+role — used as-is rather than hand-rolled, since it is already the narrow,
+audited permission set the agent needs. **After a `terraform apply` that
+touches this for the first time, the agent needs a kick**: it can cache an
+earlier "no permissions" failure and not retry on its own —
+`sudo systemctl restart snap.amazon-ssm-agent.amazon-ssm-agent.service` on
+the instance, then it registers within seconds.
+
 ## A real bug this deployment found
 
 The first IAM policy for `sentinelops-ec2-role` granted `s3:GetObject` and
@@ -130,13 +176,15 @@ type (the bucket, not `bucket/*`) and IAM would reject combining them.
 
 ## Known gaps, honestly
 
-- **Deploy-on-push exists, but authenticates with a stored SSH key, not
-  OIDC.** `.github/workflows/deploy.yml` deploys on every push to `main` via
-  `DEPLOY_SSH_KEY`, a long-lived secret in GitHub Actions — not the
-  no-stored-credential pattern Phase 5 milestone 5 specified for GCP's
-  Workload Identity Federation (see `11-phase5-handoff.md`). An AWS
-  equivalent (GitHub's OIDC provider federated to an IAM role, no key at
-  rest) is a real improvement over what's here, not yet built.
+- **Deploy-on-push exists, but authenticates with two stored credentials, not
+  OIDC.** `.github/workflows/deploy.yml` needs `DEPLOY_SSH_KEY` and an IAM
+  access key pair for `sentinelops-ci-deploy` (`ci.tf`) — both long-lived
+  secrets in GitHub Actions, not the no-stored-credential pattern Phase 5
+  milestone 5 specified for GCP's Workload Identity Federation (see
+  `11-phase5-handoff.md`). The IAM user is at least scoped to nothing but one
+  security group's ingress rules, which bounds what leaking it would cost —
+  but a GitHub OIDC provider federated to an IAM role (no key at rest for
+  either credential) is a real improvement over what's here, not yet built.
 - **No CloudWatch, no alerting.** If the instance runs out of disk or the
   Docker daemon dies at 3am, nothing pages anyone. This is the same
   observability gap the main README's self-scan reports about the
