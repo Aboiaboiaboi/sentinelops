@@ -97,6 +97,16 @@ services:
       # The API publishes scan jobs here; it never consumes them.
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+      # Optional — empty means the private-repository feature reports itself
+      # unavailable rather than half-working (app/api/github.py). Not read
+      # from backend/.env: Compose does not pass a container's own .env file
+      # into it automatically, and backend/.dockerignore excludes it from the
+      # image besides. These read from THIS file's own .env (repository root)
+      # or the shell's environment, the same as every other ${VAR} above.
+      # Only the API imports github_app_service — the worker never needs these.
+      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
+      GITHUB_APP_PRIVATE_KEY_B64: ${GITHUB_APP_PRIVATE_KEY_B64:-}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
     depends_on:
       postgres:
         condition: service_healthy
