@@ -171,9 +171,17 @@ services:
       SANDBOX_VOLUME: sentinelops_prod_worker_data
       SANDBOX_CACHE_VOLUME: sentinelops_prod_sandbox_cache
       SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-6}
-      # Not GITHUB_APP_* — that flow lives entirely in app/api/github.py, which
-      # only the API process imports. Setting it here too would be harmless but
-      # misleading about which process actually needs it.
+      # Needed here too: app/workers/scan_tasks.py calls get_github_app_auth()
+      # directly to mint an installation token when cloning a private
+      # repository, so the worker process needs these just as much as the API
+      # does. Without them, a connected private repository clones anonymously
+      # and fails with git's identical "not found" response for missing vs.
+      # private, surfacing as REPOSITORY_NOT_FOUND — indistinguishable from a
+      # typo'd URL. (Found the hard way: this comment used to say the
+      # opposite.)
+      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
+      GITHUB_APP_PRIVATE_KEY_B64: ${GITHUB_APP_PRIVATE_KEY_B64:-}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
     depends_on:
       postgres:
         condition: service_healthy

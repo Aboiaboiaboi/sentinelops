@@ -80,3 +80,7 @@ crash.log
 # build artifact the application needs, and not something the repository gains
 # by tracking. Left on disk; just kept out of `git status`.
 /screenshots/
+
+# GitHub App private key downloads and any other local key material —
+# never belongs in the repository regardless of where it is saved.
+*.pem

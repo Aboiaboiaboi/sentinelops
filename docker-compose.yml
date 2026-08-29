@@ -103,7 +103,10 @@ services:
       # into it automatically, and backend/.dockerignore excludes it from the
       # image besides. These read from THIS file's own .env (repository root)
       # or the shell's environment, the same as every other ${VAR} above.
-      # Only the API imports github_app_service — the worker never needs these.
+      # api/github.py's own connect flow needs these here too. The worker
+      # below needs its own copy as well — see its environment block for why
+      # (scan_tasks.py calls get_github_app_auth() directly to clone private
+      # repositories, so it is not only the API process that imports this).
       GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
       GITHUB_APP_PRIVATE_KEY_B64: ${GITHUB_APP_PRIVATE_KEY_B64:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
@@ -197,6 +200,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
       SANDBOX_ENABLED: "true"
+      # Needed here too, not just on backend: scan_tasks.py calls
+      # get_github_app_auth() directly to mint an installation token for
+      # cloning a private repository. Without these, a connected private
+      # repository clones anonymously, fails with git's identical "not
+      # found" response for missing-vs-private, and reports the same
+      # REPOSITORY_NOT_FOUND detail a typo'd URL would.
+      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
+      GITHUB_APP_PRIVATE_KEY_B64: ${GITHUB_APP_PRIVATE_KEY_B64:-}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       # The volume name, not a path. `docker run` from inside this container is
       # served by the host daemon, so bind-mounting /data/repos/... would name a
       # path the host does not have — the tool would scan nothing and report the
