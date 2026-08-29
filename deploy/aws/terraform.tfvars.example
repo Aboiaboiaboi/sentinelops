@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars and fill in. Never commit the real file — it names
+# your account's bucket and your IP, and terraform.tfvars is gitignored for
+# exactly that reason.
+
+region        = "us-east-1"
+instance_type = "t3.small"
+
+# Your current public IP, /32. Find it with: curl https://checkip.amazonaws.com
+ssh_allowed_cidr = "203.0.113.1/32"
+
+# The public half of an SSH key pair. Generate one if you don't have it:
+#   ssh-keygen -t ed25519 -f ~/.ssh/sentinelops-deploy -C sentinelops-deploy
+# then paste the contents of the .pub file here.
+ssh_public_key = "ssh-ed25519 AAAA... sentinelops-deploy"
+
+# <project>-reports-<your-account-id> is the convention this repo uses —
+# unique without a random suffix, and legible from the name alone.
+storage_bucket_name = "sentinelops-reports-123456789012"
