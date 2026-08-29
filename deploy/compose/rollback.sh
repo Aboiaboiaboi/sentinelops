@@ -79,7 +79,10 @@ if [ "$WITH_DB_DOWNGRADE" -eq 1 ]; then
     echo "########################################################################"
     echo ""
     sleep 5
-    $COMPOSE run --rm migrate alembic downgrade -1
+    # -T and </dev/null for the same reason deploy.sh documents at length:
+    # `docker compose run` attaches stdin, which silently eats the rest of a
+    # script whenever this is invoked with a script on stdin.
+    $COMPOSE run --rm -T migrate alembic downgrade -1 < /dev/null
 else
     echo "==> Not touching the database (default). Pass --with-db-downgrade to" \
          "run one 'alembic downgrade -1' if a specific migration is the problem."
@@ -92,7 +95,7 @@ echo "==> Rolling worker"
 $COMPOSE up -d --no-deps --wait worker
 
 echo "==> Rebuilding the frontend static files"
-$COMPOSE run --rm frontend-build
+$COMPOSE run --rm -T frontend-build < /dev/null
 
 echo "==> Rolling frontend"
 # Almost always a no-op — see docker-compose.prod.yml's comment on the
