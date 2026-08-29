@@ -16,26 +16,39 @@ simplifications is fine at this size and what would make them not fine.
 
 ## What's running right now
 
-**https://3-235-237-157.sslip.io** — commit `ccd24a2` at the time this was
-first deployed (2026-08-29), self-scan **94/100, Grade A**, verified end to
-end: signup, a real scan, the sandbox, and a PDF report that round-trips
-through the actual S3 bucket below, not a stand-in.
-
-sslip.io is a free wildcard DNS service that resolves `<ip-with-dashes>.sslip.io`
-to that literal IP — no signup, no cost, and it is a real, publicly resolvable
-domain, so Caddy gets a genuine Let's Encrypt certificate for it rather than a
-self-signed one. The dashes-for-dots trick is the entire service: change the
-instance's IP and the domain that resolves to it changes with it. If a real
-domain is ever pointed here instead, update `DOMAIN` in
-`deploy/compose/.env` on the instance and restart the `frontend` container —
-Caddy requests a fresh certificate for whatever it's given.
+**Currently stopped, deliberately** — the instance is stopped between working
+sessions rather than left running (and billing) with nobody using it. First
+deployed 2026-08-29 at commit `ccd24a2`, self-scan **94/100, Grade A**,
+verified end to end: signup, a real scan, the sandbox, and a PDF report that
+round-trips through the actual S3 bucket below, not a stand-in.
 
 | | |
 |---|---|
 | Instance | `i-09ef906ff63661005`, t3.small, us-east-1a |
-| Public IP | `3.235.237.157` |
 | Storage bucket | `sentinelops-reports-473183365846` |
-| SSH | `ssh -i ~/.ssh/sentinelops-deploy.pem ubuntu@3.235.237.157` (or `terraform output ssh_command`) |
+| SSH | `ssh -i ~/.ssh/sentinelops-deploy.pem ubuntu@<address>` — see below for what `<address>` is |
+
+**A fixed address (`aws_eip.app`, in `instance.tf`) is configured but not yet
+applied.** Until `terraform apply` runs, the instance's public IP is
+ephemeral and changes on every stop/start — which the first deployment
+learned the hard way, since it silently breaks the sslip.io domain below,
+`DEPLOY_DOMAIN` in GitHub Actions, and any GitHub App callback pointing at
+the instance, all three at once. Applying is one command:
+
+```bash
+cd deploy/aws
+terraform apply
+```
+
+**After that (or whenever the address changes for any other reason),** the
+domain the app lives at is `terraform output -raw sslip_domain`, which
+resolves through [sslip.io](https://sslip.io) — a free wildcard DNS service
+with no signup: `<ip-with-dashes>.sslip.io` resolves to that literal IP, and
+because it's a real, publicly resolvable domain, Caddy gets a genuine Let's
+Encrypt certificate for it rather than a self-signed one. If a real domain is
+ever pointed here instead, update `DOMAIN` in `deploy/compose/.env` on the
+instance and restart the `frontend` container — Caddy requests a fresh
+certificate for whatever it's given.
 
 ## Running it
 
@@ -91,6 +104,15 @@ and `AWS_SECRET_ACCESS_KEY` in `deploy/compose/.env` stay empty on AWS for
 exactly this reason; they exist in that file for R2, Spaces or MinIO, which
 have no equivalent to an instance role.
 
+**An Elastic IP, not the ephemeral address.** `aws_eip.app` in `instance.tf`
+costs nothing while the instance is running — same as any address attached to
+a running instance — but roughly **$3.60/month while it's stopped**, since
+AWS stopped giving public IPv4 addresses away for free in February 2024. That
+is a deliberate trade against the alternative: without it, every stop/start
+(and the instance is stopped between sessions on purpose — see above) breaks
+the sslip.io domain, `DEPLOY_DOMAIN` in Actions, and any GitHub App callback,
+all three at once, silently, until someone notices the site is unreachable.
+
 ## A real bug this deployment found
 
 The first IAM policy for `sentinelops-ec2-role` granted `s3:GetObject` and
@@ -108,11 +130,13 @@ type (the bucket, not `bucket/*`) and IAM would reject combining them.
 
 ## Known gaps, honestly
 
-- **No deploy-on-tag.** Updating the running app today means SSHing in,
-  `git pull`, `docker compose up -d --build`. Phase 5 milestone 5 (see
-  `11-phase5-handoff.md`) was written for GCP's Workload Identity Federation;
-  an AWS equivalent (OIDC to an IAM role, no long-lived key in GitHub Actions)
-  is a rewrite, not a port, and is not built yet.
+- **Deploy-on-push exists, but authenticates with a stored SSH key, not
+  OIDC.** `.github/workflows/deploy.yml` deploys on every push to `main` via
+  `DEPLOY_SSH_KEY`, a long-lived secret in GitHub Actions — not the
+  no-stored-credential pattern Phase 5 milestone 5 specified for GCP's
+  Workload Identity Federation (see `11-phase5-handoff.md`). An AWS
+  equivalent (GitHub's OIDC provider federated to an IAM role, no key at
+  rest) is a real improvement over what's here, not yet built.
 - **No CloudWatch, no alerting.** If the instance runs out of disk or the
   Docker daemon dies at 3am, nothing pages anyone. This is the same
   observability gap the main README's self-scan reports about the
