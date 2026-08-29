@@ -11,7 +11,23 @@
 	# through — the backend's routes are mounted at the root (main.py), not
 	# under /api, matching the dev proxy's rewrite exactly.
 	handle_path /api/* {
-		reverse_proxy {$BACKEND_ADDR}
+		# lb_try_duration is what makes a rolling deploy (deploy/compose's
+		# docker-compose.prod.yml, swapped one service at a time via
+		# .github/workflows/deploy.yml) not drop requests. Without it, Caddy's
+		# default is a single attempt — a request that lands in the window
+		# where the backend container has stopped and its replacement hasn't
+		# passed its healthcheck yet gets an immediate 502, not a retry. This
+		# was measured, not assumed: the first version of this file shipped
+		# without it, and a real rolling swap produced ~2.7s of consecutive
+		# 502s. With it, the same swap keeps retrying the single upstream for
+		# up to 15s — comfortably longer than a container recreate plus
+		# healthcheck — so a request in that window waits briefly instead of
+		# failing. There is only one upstream here, so this is not
+		# load-balancing; it is retry-until-it-answers.
+		reverse_proxy {$BACKEND_ADDR} {
+			lb_try_duration 15s
+			lb_try_interval 250ms
+		}
 	}
 
 	# Everything else is the built SPA. try_files falls back to index.html for
