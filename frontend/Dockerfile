@@ -27,17 +27,31 @@ COPY src ./src
 RUN npm run build
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime — Caddy, serving the build and proxying the API.
+# Stage 2: runtime — Caddy, proxying the API and serving whatever the SPA
+# build put in /srv. Deliberately does NOT COPY the builder's /app/dist in —
+# see the comment on that below.
 #
-# One container does both jobs deliberately. Phase 5's single-origin decision
-# (06-context-handoff.md / 10-phase5-plan.md §3.1) is why: the auth cookie is
-# `SameSite=Lax`, which is not sent on a cross-site request, so the SPA and the
-# API must appear to the browser as one origin. A Caddyfile rewriting `/api/**`
-# to the backend service does that with no CORS configuration and no second
-# certificate — Caddy also obtains and renews the TLS certificate for whatever
-# domain it is given, which is the other half of `cookie_secure`.
+# One container does both TLS/proxy and static serving. Phase 5's single-origin
+# decision (06-context-handoff.md / 10-phase5-plan.md §3.1) is why: the auth
+# cookie is `SameSite=Lax`, which is not sent on a cross-site request, so the
+# SPA and the API must appear to the browser as one origin. A Caddyfile
+# rewriting `/api/**` to the backend service does that with no CORS
+# configuration and no second certificate — Caddy also obtains and renews the
+# TLS certificate for whatever domain it is given, which is the other half of
+# `cookie_secure`.
+#
+# `/srv` is empty in this image on purpose. deploy/compose/docker-compose.prod.yml
+# mounts a named volume there instead of baking the build in with COPY, and
+# populates it from a separate one-shot `frontend-build` service that targets
+# the `builder` stage above. The reason is deploy cadence, not size: baking
+# dist into this image means every ordinary code push rebuilds and recreates
+# *this* container too — the one holding the TLS certificate and the public
+# 80/443 listener — which was measured to drop the site for the length of the
+# container swap. A volume means an app deploy only ever touches the one-shot
+# builder; this container, and the listener it holds, never restarts for it.
+# `docker build .` outside that compose file still produces a correct image —
+# just one that serves nothing at /srv until something populates the mount.
 # ---------------------------------------------------------------------------
 FROM caddy:2-alpine AS runtime
 
-COPY --from=builder /app/dist /srv
 COPY Caddyfile /etc/caddy/Caddyfile

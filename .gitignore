@@ -3,6 +3,12 @@
 .env.*
 !.env.example
 
+# Written on the instance by deploy.yml / rollback.sh, not by anyone locally
+# — records which commit is currently the last known-good deploy, so a
+# rollback with no ref has something to read.
+deploy/compose/.last-good-deploy
+deploy/compose/.last-good-deploy-candidate
+
 # Python (backend, worker)
 __pycache__/
 *.py[cod]

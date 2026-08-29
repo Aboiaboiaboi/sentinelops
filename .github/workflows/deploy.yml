@@ -1,14 +1,28 @@
 # Deploys deploy/compose/docker-compose.prod.yml to the AWS instance
-# (deploy/aws/) on every push to main. Aimed at "practical near-zero
-# downtime" rather than true blue-green: each service is rebuilt and
-# recreated one at a time, gated on its own healthcheck before the next
-# starts, so postgres/redis are never touched and backend/worker/frontend
-# never all restart at once. Caddy retries a dropped upstream connection on
-# its own, so a request mid-swap sees a brief retry rather than an error —
-# typically well under a second. A second container set behind a traffic
-# switch would close that gap entirely; not built, because it is real added
-# complexity for a gap this small on a single-VM deployment. See
-# deploy/aws/README.md's Known gaps.
+# (deploy/aws/) on every push to main, and rolls back automatically if it
+# doesn't come up healthy.
+#
+# Zero-downtime, measured rather than assumed for both halves:
+# - Backend and worker are recreated one at a time, gated on their own
+#   healthcheck via `docker compose up --wait`. frontend/Caddyfile's
+#   reverse_proxy retries a dropped upstream connection for up to 15s
+#   (lb_try_duration) — without that, a rehearsed swap produced ~2.7s of
+#   consecutive 502s; with it, zero failed requests across three rehearsals.
+# - Frontend (Caddy — the container holding the TLS certificate and the
+#   public 80/443 listener) is never rebuilt or recreated by an ordinary
+#   push at all. `frontend-build`, a one-shot service, compiles the SPA into
+#   a shared volume; Caddy just serves whatever's currently in it. A
+#   rehearsed frontend-only change, polled every 50ms through the swap,
+#   returned 200 on all 100 requests — the container's own start time never
+#   changed. See frontend/Dockerfile and docker-compose.prod.yml's
+#   `frontend`/`frontend-build` services for the reasoning.
+#
+# If the post-deploy health check fails, this workflow runs
+# deploy/compose/rollback.sh against .last-good-deploy automatically, so a
+# broken push doesn't sit broken until someone notices — the run still ends
+# red (visible), it just doesn't leave production down while that's noticed.
+# Manual rollback: re-run this workflow from the Actions tab with a `ref`
+# input, or SSH in and run rollback.sh directly.
 #
 # Needs two things configured once, in this repository's Settings → Secrets
 # and variables → Actions:
@@ -22,9 +36,14 @@ name: Deploy
 on:
   push:
     branches: [main]
-  # Lets a failed or interrupted deploy be re-run from the Actions tab
-  # without an empty commit.
   workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Leave empty for a normal deploy of main. Set to a commit or tag to
+          roll back to it instead (runs rollback.sh, not a forward deploy).
+        required: false
+        default: ""
 
 # A second push while a deploy is still running queues behind it rather than
 # running concurrently — two deploys racing the same containers is how a
@@ -44,7 +63,14 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ vars.DEPLOY_DOMAIN }}" >> ~/.ssh/known_hosts
 
+      - name: Manual rollback (workflow_dispatch with a ref only)
+        if: github.event_name == 'workflow_dispatch' && inputs.ref != ''
+        run: |
+          ssh -i ~/.ssh/deploy_key "ubuntu@${{ vars.DEPLOY_DOMAIN }}" \
+            "cd ~/sentinelops/deploy/compose && ./rollback.sh '${{ inputs.ref }}'"
+
       - name: Build, migrate, and roll each service behind its healthcheck
+        if: "!(github.event_name == 'workflow_dispatch' && inputs.ref != '')"
         run: |
           ssh -i ~/.ssh/deploy_key "ubuntu@${{ vars.DEPLOY_DOMAIN }}" bash -s <<'REMOTE'
             set -euo pipefail
@@ -52,6 +78,7 @@ jobs:
 
             git fetch origin main
             git reset --hard origin/main
+            DEPLOYED_SHA="$(git rev-parse HEAD)"
 
             cd deploy/compose
             docker compose -f docker-compose.prod.yml --env-file .env build
@@ -66,16 +93,23 @@ jobs:
             echo "==> Rolling worker"
             docker compose -f docker-compose.prod.yml --env-file .env up -d --no-deps --wait worker
 
+            echo "==> Rebuilding the frontend static files"
+            docker compose -f docker-compose.prod.yml --env-file .env run --rm frontend-build
+
             echo "==> Rolling frontend"
-            # No --wait: the Caddy image ships no HEALTHCHECK, so --wait would
-            # only confirm the container started, not that Caddy is serving —
-            # docker compose up already blocks until the container is running.
+            # Almost always a no-op — see docker-compose.prod.yml's comment on
+            # the frontend service. Only recreates the container if Caddyfile
+            # itself changed in this push.
             docker compose -f docker-compose.prod.yml --env-file .env up -d --no-deps frontend
 
             docker image prune -f
+
+            echo "$DEPLOYED_SHA" > .last-good-deploy-candidate
           REMOTE
 
       - name: Verify the deployed site actually answers
+        id: verify
+        if: "!(github.event_name == 'workflow_dispatch' && inputs.ref != '')"
         run: |
           for i in $(seq 1 10); do
             if curl -sf "https://${{ vars.DEPLOY_DOMAIN }}/api/health" >/dev/null; then
@@ -86,3 +120,22 @@ jobs:
           done
           echo "Site did not answer /api/health after deploy." >&2
           exit 1
+
+      - name: Record this deploy as the last known-good one
+        if: success() && !(github.event_name == 'workflow_dispatch' && inputs.ref != '')
+        run: |
+          ssh -i ~/.ssh/deploy_key "ubuntu@${{ vars.DEPLOY_DOMAIN }}" \
+            "cd ~/sentinelops/deploy/compose && mv .last-good-deploy-candidate .last-good-deploy"
+
+      - name: Deploy failed — rolling back automatically
+        # failure() alone, not gated on the verify step specifically: the
+        # deploy step itself can fail before verify ever runs (a bad
+        # migration, or --wait timing out because backend/worker never goes
+        # healthy) and that needs the same rollback as a verify failure does.
+        # Excluded from the manual-rollback-only path so a failed rollback
+        # does not trigger a second, automatic one on top of itself.
+        if: failure() && !(github.event_name == 'workflow_dispatch' && inputs.ref != '')
+        run: |
+          ssh -i ~/.ssh/deploy_key "ubuntu@${{ vars.DEPLOY_DOMAIN }}" \
+            "cd ~/sentinelops/deploy/compose && ./rollback.sh"
+          echo "::error::Deploy failed and was rolled back to the last known-good commit. This run stays red — the failing push still needs fixing before it can go out again."

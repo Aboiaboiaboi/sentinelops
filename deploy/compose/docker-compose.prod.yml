@@ -182,12 +182,33 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # The single public-facing container: builds the SPA and serves it, proxies
-  # /api to the backend, and terminates TLS. See frontend/Caddyfile and its
-  # Dockerfile for why this is one container rather than two.
+  # Builds the SPA and drops it into frontend_dist, then exits. One-shot, the
+  # same shape as `migrate` below it in spirit — run once per deploy, not kept
+  # running. Split out of the `frontend` (Caddy) service specifically so an
+  # ordinary code push never touches the container holding the TLS
+  # certificate and the public 80/443 listener — see frontend/Dockerfile's
+  # runtime-stage comment for the measured reason this exists.
+  frontend-build:
+    build:
+      context: ../../frontend
+      target: builder
+    entrypoint: ["sh", "-c"]
+    command:
+      - "cp -r /app/dist/. /output/ && echo 'frontend build copied to volume'"
+    volumes:
+      - frontend_dist:/output
+
+  # The single public-facing container: terminates TLS, proxies /api to the
+  # backend, and serves whatever frontend-build most recently put in
+  # frontend_dist. Never rebuilt or recreated by an ordinary app deploy —
+  # `docker compose up -d --no-deps frontend` is a no-op unless this
+  # service's own build context (Caddyfile) changed, which is what makes the
+  # zero-downtime claim true rather than aspirational. See
+  # frontend/Dockerfile for the full reasoning.
   frontend:
     build:
       context: ../../frontend
+      target: runtime
     restart: unless-stopped
     ports:
       - "80:80"
@@ -201,14 +222,25 @@ services:
       # data.
       - caddy_data:/data
       - caddy_config:/config
+      # Read-only: this container serves static files, it never produces them.
+      - frontend_dist:/srv:ro
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      # Required only so a from-scratch `docker compose up` has something to
+      # serve on Caddy's very first start. Every deploy after the first calls
+      # frontend-build directly (deploy.yml, provision.sh) rather than
+      # relying on this — see the note on `frontend` above about why an
+      # ordinary push must not touch this service at all.
+      frontend-build:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:
   redis_data:
   caddy_data:
   caddy_config:
+  frontend_dist:
   # Named explicitly and namespaced with _prod_, so this file and the dev
   # docker-compose.yml never collide if both are ever run against the same
   # Docker daemon — the same failure mode the dev file's own comment warns
