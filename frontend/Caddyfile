@@ -1,0 +1,27 @@
+# Single-origin front door: the SPA and the API answer as one origin, the same
+# property Vite's dev proxy gives locally (vite.config.ts) and the reason Phase
+# 5 rejected a split origin (10-phase5-plan.md §3.1) — the auth cookie is
+# SameSite=Lax and is not sent on a cross-site request.
+#
+# {$DOMAIN} and {$BACKEND_ADDR} are supplied by docker-compose.prod.yml, not
+# hardcoded here — the same image runs behind any domain or any backend service
+# name without a rebuild.
+{$DOMAIN} {
+	# Proxied before the file server, and stripped of its prefix on the way
+	# through — the backend's routes are mounted at the root (main.py), not
+	# under /api, matching the dev proxy's rewrite exactly.
+	handle_path /api/* {
+		reverse_proxy {$BACKEND_ADDR}
+	}
+
+	# Everything else is the built SPA. try_files falls back to index.html for
+	# any path that is not a real static asset, which is what a client-side
+	# router (react-router-dom) needs — a deep link like /projects/abc must
+	# still resolve to the app shell, not a 404 from the file server.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+		encode gzip
+	}
+}

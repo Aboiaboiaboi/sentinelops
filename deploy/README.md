@@ -1,14 +1,46 @@
 # Infrastructure
 
-Everything SentinelOps runs on, as code. Terraform for all of it except the
-handful of things Terraform cannot create for itself, which is what
-`bootstrap.sh` is for.
+Everything SentinelOps runs on, as code, for the one-cloud managed-services
+deployment. `deploy/compose/` next to this directory is the other path — a
+Docker Compose stack that runs on any VM on any cloud and names none of them;
+read its README instead if that is what you are looking for. This directory is
+Terraform, for all of it except the handful of things Terraform cannot create
+for itself, which is what `bootstrap.sh` is for.
 
-Nothing here has been applied yet. It validates, and validating is not the same
-as working — the first `terraform plan` against a real project is where the
-remaining errors live.
+## Current state — read this before touching anything here
 
-## Running it
+**This was applied for real, once, on 2026-08-10 — the "Nothing here has been
+applied yet" this file used to open with was wrong the moment that happened.**
+The three-stage apply below ran against `sentinelops-fyp-2026`: the network
+came up clean, Cloud SQL and Memorystore provisioned, and stage three finished
+— service accounts, secrets, Cloud Run, WIF, the budget alert, all of it. The
+migration job ran and exited 0. The API reached `Ready` and served real
+traffic.
+
+**Then the project's billing account lapsed**, and everything here has been
+frozen since. `gcloud billing projects describe sentinelops-fyp-2026` reads
+`billingEnabled: false`; Cloud SQL shows `SUSPENDED`; Memorystore refuses API
+calls outright (`PERMISSION_DENIED: ... requires billing to be enabled`); the
+deployed API answers `HTTP 500`. `terraform destroy` cannot run in this state
+either — deleting billed resources needs billing enabled — so the project can
+currently be neither used nor cleaned up.
+
+**GCP deletes a project roughly 30 days after billing is disabled.** The lapse
+was on or shortly after 2026-08-10, so that window was closing as of this
+writing and may already have passed. When it does, the Terraform state file in
+this project's GCS bucket goes with it, and this configuration stops
+describing anything real. That is an acceptable outcome, not an emergency —
+nothing here is the working deployment any more (`deploy/compose/` is) — but it
+is worth knowing rather than discovering.
+
+**Next deployment is planned for AWS or Azure**, not a return to this project.
+This Terraform stays as the "one cloud, done properly" reference — real
+managed services, least-privilege IAM, Workload Identity Federation — and as
+documentation of what a from-scratch cloud deployment looked like the one time
+it was actually run. See `11-phase5-handoff.md` (outside the repository, in the
+handoff documents) for the full account.
+
+## Running it, if you do decide to revive or fork this
 
 ```bash
 ./bootstrap.sh my-project-id 01ABCD-234567-89EFGH   # once, ever
@@ -130,16 +162,29 @@ that never expires and works from anywhere.
 
 ## Known gaps
 
+- **The sandbox was never going to be defined here.** `SANDBOX_ENABLED=false`
+  on the worker, so the three tool-backed security checks would report
+  `errored` — honestly and visibly — on any deployment built from this
+  Terraform, indefinitely. The Cloud Run Jobs implementation this once waited
+  on (`CloudRunJobSandbox`, Phase 5 milestone 3) is not going to land: it was a
+  GCP-shaped class with an ECS- or Container-Instances-shaped equivalent on
+  every other cloud, and `deploy/compose/` exists specifically because
+  `DockerSandbox` already runs anywhere — see `11-phase5-handoff.md`. If this
+  Terraform is ever revived, the sandbox is the reason not to expect a
+  headline security score from it without also solving this.
+- **`FORWARDED_ALLOW_IPS` is very likely the wrong variable name.** It is set
+  here on `run.tf`'s API service, but Uvicorn's CLI reads its own flags from
+  environment variables with a `UVICORN_` prefix (`click`'s
+  `auto_envvar_prefix`) — the flag is `--forwarded-allow-ips`, so the variable
+  Uvicorn actually reads is `UVICORN_FORWARDED_ALLOW_IPS`, not
+  `FORWARDED_ALLOW_IPS`. Found while building and verifying `deploy/compose/`,
+  where getting this right was necessary for login to work at all. Never
+  measured against the real deployment before it froze, so it is recorded here
+  as a strong suspicion rather than a confirmed bug — but if true, every user
+  behind Cloud Run's front end shared one rate-limit bucket the entire time
+  this ran. Worth the five minutes to check before ever reusing this file.
 - **Cloud Run cannot pull from GHCR.** Not an authentication problem — the
   registry is not accepted. Hence the Artifact Registry repository here; the
   deploy workflow mirrors into it, and GHCR stays the public copy.
-- **The sandbox is not defined yet.** `SANDBOX_ENABLED=false` on the worker, so
-  the three tool-backed security checks report `errored` — honestly and
-  visibly — until the Cloud Run Jobs implementation lands. That work also needs
-  the Gitleaks, Trivy and Semgrep images mirrored into Artifact Registry, for
-  the same reason as above.
-- **`FORWARDED_ALLOW_IPS` is set from documentation, not measurement.** If it is
-  wrong, every user shares one rate-limit bucket. Verified from two addresses in
-  the production-configuration milestone rather than assumed here.
 - **No Firebase Hosting.** The SPA and its `/api` rewrite are a separate
   milestone; `frontend_url` stays empty until then.

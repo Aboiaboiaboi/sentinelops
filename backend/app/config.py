@@ -56,6 +56,22 @@ class Settings(BaseSettings):
     # re-render on every replica and lose everything on the way down.
     storage_bucket: str = ""
 
+    # Which class owns storage_bucket. Defaults to "gcs" so an existing
+    # deployment that only ever set STORAGE_BUCKET keeps behaving exactly as it
+    # did before this setting existed.
+    storage_provider: Literal["gcs", "s3"] = "gcs"
+
+    # S3 only. Empty selects real AWS, resolved by boto3's own endpoint logic.
+    # Set to point the same class at anything else that speaks the S3 API —
+    # Cloudflare R2, DigitalOcean Spaces, MinIO — which is the entire cost of
+    # moving object storage off AWS.
+    storage_endpoint_url: str = ""
+    # S3 only. Empty lets boto3 resolve a region from its usual chain
+    # (environment, shared config, instance metadata). Irrelevant to most
+    # S3-compatible providers, which ignore it — MinIO does — but AWS itself
+    # requires one for some operations, so it is exposed rather than assumed.
+    storage_region: str = ""
+
     # Job queue. Matches docker-compose.yml; database 0 is arq's, and the rate
     # limiter would take a different one if it ever moves off memory://.
     redis_url: str = "redis://localhost:6379/0"

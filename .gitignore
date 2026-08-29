@@ -59,4 +59,14 @@ deploy/.terraform/
 # Names one particular deployment, and backend.hcl points at its state bucket.
 deploy/terraform.tfvars
 deploy/backend.hcl
+# `terraform plan` output saved to a file for review. Useful in the moment,
+# stale the moment the config or the real infrastructure changes again — the
+# same reason .tfstate is ignored, one step removed.
+deploy/*.out
+plan*.out
 crash.log
+
+# Portfolio screenshots, generated on demand against a mocked API — not a
+# build artifact the application needs, and not something the repository gains
+# by tracking. Left on disk; just kept out of `git status`.
+/screenshots/

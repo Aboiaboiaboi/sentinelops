@@ -1,0 +1,219 @@
+# The portable deployment target: one Linux VM, on any cloud's free trial,
+# running Docker. Where deploy/*.tf is "one cloud, done properly, with managed
+# services and least-privilege IAM," this is "works anywhere Docker runs" — the
+# trade named in 11-phase5-handoff.md: no scale-to-zero, no managed database, no
+# autoscaling, in exchange for zero lock-in and a five-minute move between AWS,
+# Azure, Hetzner or a spare laptop.
+#
+# Built from docker-compose.yml (the dev file), with the differences that make
+# it safe to expose: no bind-mounted source, no published database ports,
+# ENVIRONMENT=production, and real secrets from the environment instead of
+# boring defaults. Read deploy/compose/README.md before running this.
+#
+# provision.sh writes deploy/compose/.env from .env.example and calls
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+# from this directory.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sentinelops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a real password in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-sentinelops}
+    # No published port. Reached only from other containers on this compose
+    # network — the dev file exposes 5432 for a host-side psql session, which a
+    # deployed database must not offer to anything outside the VM.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-sentinelops} -d ${POSTGRES_DB:-sentinelops}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: ../../backend
+      target: api
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentinelops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sentinelops}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # One-shot, exactly once, never on every replica's boot — the same reasoning
+    # 10-phase5-plan.md milestone 5 gives for a dedicated migration job rather
+    # than an API entrypoint hook: N replicas migrating at once is N−1 timeouts
+    # racing for Alembic's lock.
+
+  backend:
+    build:
+      context: ../../backend
+      target: api
+    restart: unless-stopped
+    # No published port. The API is reached only through the frontend
+    # container's Caddy proxy — see frontend/Caddyfile — which is also why
+    # UVICORN_FORWARDED_ALLOW_IPS below is safe to trust broadly: nothing but
+    # that one proxy, inside this same compose network, can ever reach it.
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentinelops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sentinelops}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:?generate one — see README}
+      FRONTEND_URL: https://${DOMAIN:?set your domain in .env}
+      # Object storage. Defaults to S3-shaped settings because that is the
+      # widest-portable option (real S3, R2, Spaces, MinIO); switch
+      # STORAGE_PROVIDER to gcs and drop STORAGE_ENDPOINT_URL for Cloud Storage.
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-s3}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:?set a bucket in .env — LocalStorage on a single VM is a single point of failure and the one thing this file should not default to silently}
+      STORAGE_ENDPOINT_URL: ${STORAGE_ENDPOINT_URL:-}
+      STORAGE_REGION: ${STORAGE_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # See the comment above: Caddy is the only thing that can reach this
+      # container at all, so trusting every forwarded-for header it presents
+      # costs nothing extra — unlike the general warning in backend/Dockerfile,
+      # which is about a container reachable from the public internet directly.
+      UVICORN_FORWARDED_ALLOW_IPS: "*"
+      CORS_ORIGINS: "[]"
+      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
+      GITHUB_APP_PRIVATE_KEY_B64: ${GITHUB_APP_PRIVATE_KEY_B64:-}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Same reasoning as docker-compose.yml: Trivy's DB and Semgrep's rules need
+  # network access the sandboxed scan containers deliberately do not have, so
+  # these run once with it and populate a volume the scan containers mount
+  # read-only. Unlike dev, nothing here refreshes them automatically after the
+  # first `up` — see README.md for the cron line that keeps them current.
+  warm-trivy:
+    image: aquasec/trivy:0.72.0
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        trivy image --download-db-only --no-progress --cache-dir /cache &&
+        chmod -R a+rX /cache
+    volumes:
+      - sandbox_cache:/cache
+
+  warm-semgrep:
+    image: semgrep/semgrep:1.171.0
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        mkdir -p /cache/semgrep /src && touch /src/.keep &&
+        curl -sSfL -o /cache/semgrep/.security-audit.yml.tmp
+        https://semgrep.dev/c/p/security-audit &&
+        semgrep scan --validate --config /cache/semgrep/.security-audit.yml.tmp
+        --metrics=off --disable-version-check &&
+        mv /cache/semgrep/.security-audit.yml.tmp /cache/semgrep/security-audit.yml &&
+        chmod -R a+rX /cache/semgrep
+    volumes:
+      - sandbox_cache:/cache
+
+  worker:
+    build:
+      context: ../../backend
+      target: worker
+    restart: unless-stopped
+    volumes:
+      - worker_data:/data
+      # Same trade the dev file documents at length: this grants root-on-host
+      # to anything that reaches the socket. It is what makes DockerSandbox
+      # portable across every cloud's VM, which is the whole point of this
+      # deployment path (11-phase5-handoff.md — milestone 3 dropped in favour
+      # of exactly this). Mitigated by the worker never being reachable from
+      # outside this VM: no published port, no public IP assigned to it
+      # directly.
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "0"
+    environment:
+      ENVIRONMENT: production
+      # Settings validates SECRET_KEY on every process that constructs it once
+      # ENVIRONMENT=production, whether or not that process signs a token
+      # itself — the worker never does, but importing app.config without this
+      # set crashes it on the validator in backend/app/config.py before it ever
+      # reaches a job.
+      SECRET_KEY: ${SECRET_KEY:?generate one — see README}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentinelops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sentinelops}
+      REDIS_URL: redis://redis:6379/0
+      SANDBOX_ENABLED: "true"
+      # Compose prefixes volume names with the project directory unless pinned
+      # — see the `name:` fields below. These strings must match those exactly,
+      # the same trap docker-compose.yml's comment documents: a name that does
+      # not match creates an empty volume instead of failing.
+      SANDBOX_VOLUME: sentinelops_prod_worker_data
+      SANDBOX_CACHE_VOLUME: sentinelops_prod_sandbox_cache
+      SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-6}
+      # Not GITHUB_APP_* — that flow lives entirely in app/api/github.py, which
+      # only the API process imports. Setting it here too would be harmless but
+      # misleading about which process actually needs it.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The single public-facing container: builds the SPA and serves it, proxies
+  # /api to the backend, and terminates TLS. See frontend/Caddyfile and its
+  # Dockerfile for why this is one container rather than two.
+  frontend:
+    build:
+      context: ../../frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set your domain in .env}
+      BACKEND_ADDR: backend:8000
+    volumes:
+      # Caddy's own state: the ACME account key and issued certificates. Not
+      # backed up deliberately — losing it costs one Let's Encrypt reissue, not
+      # data.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  # Named explicitly and namespaced with _prod_, so this file and the dev
+  # docker-compose.yml never collide if both are ever run against the same
+  # Docker daemon — the same failure mode the dev file's own comment warns
+  # about for a renamed clone directory.
+  worker_data:
+    name: sentinelops_prod_worker_data
+  sandbox_cache:
+    name: sentinelops_prod_sandbox_cache

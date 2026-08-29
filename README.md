@@ -4,7 +4,7 @@
 
 **Is this application ready for production?**
 
-Point SentinelOps at a Git repository. It clones it, runs 29 checks across six
+Point SentinelOps at a Git repository. It clones it, runs 31 checks across six
 categories, and gives you a score out of 100 with specific findings — what's
 wrong, why it matters, and what to do about it. It also tells you which commit
 it looked at, what changed since the last scan, and what it *verified* rather
@@ -28,21 +28,26 @@ Here is SentinelOps scanning **itself**, which is the real output of the
 commands below rather than an illustration:
 
 ```
-sentinelops                                        93 / 100    Grade A
+sentinelops                                        88 / 100    Grade B
 6 of 6 categories reported
-29 checks: 23 passed · 4 skipped · 2 failed
+31 checks: 23 passed · 4 skipped · 4 failed
 
   Security         22 / 25   ██████████████████░░
-  Architecture     20 / 20   ████████████████████
+  Architecture     17 / 20   █████████████████░░░
   Reliability      20 / 20   ████████████████████
-  Deployment       15 / 15   ████████████████████
+  Deployment       13 / 15   █████████████████░░░
   Scalability      10 / 10   ████████████████████
   Observability     6 / 10   ████████████░░░░░░░░
 ```
 
-Deployment reached full marks on this run because the CI pipeline the scanner
-kept asking for now exists. That check went from failing to passing without
-anybody special-casing it — the repository changed, so the score did.
+Deployment lost two points on this run for a real reason, not a stale one:
+`docker-compose.yml` mounts the Docker socket into the worker so `DockerSandbox`
+can start sibling containers for the tool-backed security checks. Root-on-the-host,
+granted deliberately, in a file marked development-only — the finding exists to
+catch exactly the case where that line gets copied into something that ships.
+Architecture lost three for a file that grew past a size anyone should be
+expected to review in one sitting. Neither is hidden or excused; both are on the
+scanner's own report about itself.
 
 The three points Security lost are a published advisory against a dependency
 this project pins, found by Trivy on the run above. It is reported rather than
@@ -61,12 +66,14 @@ Each finding tells you what it found and what to do:
 > health, and send unhandled exceptions to an error tracker so they are seen
 > without being hunted.
 
-Both of its findings are fair. One is on the roadmap below; the other is a
-dependency upgrade this project owes, reported by its own scanner.
+All four findings are fair — a dependency upgrade this project owes, a
+development-only socket mount that must never reach a real deployment, one file
+that outgrew a single sitting's worth of review, and the missing metrics above.
+None is disputed; two are already tracked on the roadmap below.
 
 Every scan is downloadable as a PDF that says the same things this page does —
 the score, the category breakdown, each finding with its recommendation, and all
-29 checks including the ones that were skipped and why.
+31 checks including the ones that were skipped and why.
 
 It **reads** code and configuration. It never runs the repository, deploys
 anything, or changes it.
@@ -80,7 +87,7 @@ serves HTTP, talks to a database, and might one day run as more than one copy.
 Django, FastAPI, Express, NestJS, Rails, Spring Boot — on Cloud Run, Fly,
 Render, ECS or Kubernetes.
 
-That is the shape all 29 checks assume, and the question they answer is
+That is the shape all 31 checks assume, and the question they answer is
 **"what did we forget?"**. Not the interesting problems — the boring, fatal
 ones. No CI. No healthcheck. Container running as root. Base image unpinned. A
 credential committed last March. No timeout on the payment API call. Sessions
@@ -91,7 +98,7 @@ instances.
 |---|---|
 | A product or SaaS API before launch | Every check applies, and 100 is genuinely reachable |
 | Internal tools and admin dashboards | Usually the worst offenders, because "it's only internal" |
-| A codebase you have just inherited | 29 answers about what is actually there beats a week of reading |
+| A codebase you have just inherited | 31 answers about what is actually there beats a week of reading |
 | One repository per service, scanned repeatedly | The score moving is worth more than the score |
 
 | Poor fit | Why |
@@ -210,14 +217,14 @@ scan progress. Set it back to `false` to use the real thing.
 
 ## What it checks
 
-Six categories, weighted to sum to 100, and 29 individual checks:
+Six categories, weighted to sum to 100, and 31 individual checks:
 
 | Category | Weight | Checks | What it looks at |
 |---|---:|---:|---|
 | **Security** | 25 | 8 | committed credentials, leaked secrets (**Gitleaks**), vulnerable dependencies (**Trivy**), dangerous code patterns (**Semgrep**), debug mode, TLS overrides, container secrets, `.gitignore` |
 | **Reliability** | 20 | 4 | health endpoint, request timeouts, swallowed errors, retries |
 | **Architecture** | 20 | 5 | tests, dependency locking, file size, layout, documentation |
-| **Deployment** | 15 | 6 | deployment config, image pinning, non-root user, healthcheck, build context, CI |
+| **Deployment** | 15 | 8 | deployment config, image pinning, non-root user, healthcheck, build context, CI, signal handling, host isolation |
 | **Observability** | 10 | 3 | logging, structured output, metrics and error tracking |
 | **Scalability** | 10 | 3 | in-memory state, local file storage, connection pooling |
 
@@ -287,10 +294,10 @@ makes it checkable:
 | | What you get | Why it exists |
 |---|---|---|
 | **Commit context** | The sha, message, author and date of the commit that was scanned | Turns "the score dropped 6" into "the score dropped 6 *at this commit*" |
-| **What was checked** | All 29 checks with an outcome each — passed, failed, skipped with a reason, or errored when a tool could not run | A category at full marks can say *what it verified*, instead of merely having nothing to complain about |
+| **What was checked** | All 31 checks with an outcome each — passed, failed, skipped with a reason, or errored when a tool could not run | A category at full marks can say *what it verified*, instead of merely having nothing to complain about |
 | **Comparison** | Score and per-category movement against the previous scan, plus the exact checks that flipped | Regressions first, because what broke is what you need to see |
 | **Failure diagnostics** | A category, a plain-language detail, and a suggested fix when a scan fails | A scan that just says "failed" is a dead end |
-| **PDF report** | `GET /scans/{id}/report` — the same score, breakdown, findings and 29 check outcomes as a document | A scan you can attach to a ticket or hand to somebody who does not have a login |
+| **PDF report** | `GET /scans/{id}/report` — the same score, breakdown, findings and 31 check outcomes as a document | A scan you can attach to a ticket or hand to somebody who does not have a login |
 
 The comparison is deliberately conservative and will **decline** to show a
 difference in three cases: when the scoring rules changed between the two scans
@@ -500,7 +507,7 @@ Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
                        Redis queue ──► Worker ┘
                                           │
                                           ▼
-                  clone → index → 6 scanners → 29 checks → score
+                  clone → index → 6 scanners → 31 checks → score
                                         │
                                         └─ sandboxed tools (no network)
 ```
@@ -540,13 +547,15 @@ Three boundaries do real work:
   runner.
 - **`utils/storage.py`, `utils/queue.py` and `utils/sandbox.py`** are the only
   files allowed to know how work leaves the process — a bucket, a broker, or a
-  container runtime. There are currently **zero** cloud SDK dependencies, so the
-  containers run anywhere; swapping Redis for SQS, or Docker for Cloud Run Jobs,
-  is a change in one file. Two of the three default to refusing, for different
-  reasons: with no container runtime a tool check reports *errored*, never
-  *passed*; with no storage configured a write raises rather than being
-  discarded, because a caller that believes it saved something and did not is
-  worse off than one that got an error.
+  container runtime. **Zero cloud SDKs are a default dependency** — the two
+  that exist (`google-cloud-storage`, `boto3`) live in optional groups and are
+  imported inside the class that needs them — so a default install runs and
+  tests with none of them present; swapping Redis for SQS, or Docker for
+  Cloud Run Jobs, is a change in one file. Two of the three default to
+  refusing, for different reasons: with no container runtime a tool check
+  reports *errored*, never *passed*; with no storage configured a write raises
+  rather than being discarded, because a caller that believes it saved
+  something and did not is worse off than one that got an error.
 
 ### Security
 
@@ -591,20 +600,23 @@ exactly.
 | Tier | What it is | What moving costs |
 |---|---|---|
 | **Confined** | Three modules — `utils/queue.py`, `utils/storage.py`, `utils/sandbox.py` — are the only places allowed to know about an execution backend or a cloud SDK. Each is a Protocol with a real implementation, a refusing default, and a `set_x()` called once at startup | A new class in one file. Nothing in `api/`, `services/` or `scanners/` changes, because none of them can name a bucket or start a container |
+| **Already portable** | `S3Storage` speaks the S3 API, which most clouds speak too — real AWS, Cloudflare R2, DigitalOcean Spaces, MinIO, or GCS through its own interop endpoint. `DockerSandbox` runs on any Linux host with a Docker daemon, which is every cloud's VM | `STORAGE_ENDPOINT_URL` and a bucket name. Nothing to write |
 | **Substitutable** | Postgres and Redis | A connection string. Cloud SQL, RDS, Neon, Upstash or a container are the same two protocols behind different hostnames |
-| **Actually locked in** | The sandbox implementation, and the infrastructure definitions | Cloud Run Jobs has no cross-provider equivalent, so a second target means a second `SandboxRunner`. Infrastructure code is provider-specific by nature — that is what it is for, not a leak |
+| **Actually locked in** | `deploy/*.tf` — Cloud Run, Cloud SQL, Memorystore, GCP IAM | Infrastructure-as-code is provider-specific by nature, and this is the one deployment path that names a cloud. `deploy/compose/` is the answer for a target that must not: same application, one Docker Compose file, any VM |
 
-Two rules keep the first row honest rather than aspirational. **No cloud SDK is
-a default dependency** — the ones that exist live in optional dependency groups
-and are imported inside the class that needs them, so an install with none of
-them present still runs, still tests, and fails loudly at the boundary rather
-than silently at import. And **the application never names a project, a region
-or a bucket**: those arrive as environment variables, set by the infrastructure
-that created them.
+Two rules keep the first two rows honest rather than aspirational. **No cloud
+SDK is a default dependency** — `google-cloud-storage` and `boto3` live in
+optional dependency groups and are imported inside the class that needs them,
+so an install with neither present still runs, still tests, and fails loudly at
+the boundary rather than silently at import. And **the application never names
+a project, a region or a bucket**: those arrive as environment variables, set
+by whatever infrastructure created them.
 
-The honest summary is that a move to another provider is one storage class, one
-sandbox class, and a rewrite of the deployment definitions — not a redesign.
-That is a smaller claim than agnosticism and it is one you can check.
+The honest summary: moving object storage between clouds is an environment
+variable, moving the sandboxed scanners is nothing at all if the target is a
+VM, and moving the managed-infrastructure deployment is a rewrite of
+`deploy/*.tf` — which is what `deploy/compose/` exists to make optional rather
+than mandatory.
 
 ---
 
@@ -624,19 +636,29 @@ That is a smaller claim than agnosticism and it is one you can check.
       boundary and cached in object storage under a key that fingerprints what
       the document says, so renaming a scan produces a fresh document rather
       than a stale one
-- [ ] **Production deployment** — CI/CD, load testing, and cloud hosting on
-      Cloud Run
+- [x] **Portable deployment** — `deploy/compose/`, a Docker Compose stack that
+      runs on any Linux VM on any cloud's free trial: Caddy for TLS and the
+      single-origin proxy, `S3Storage` for object storage against real S3, R2,
+      Spaces or MinIO, and the same `DockerSandbox` development already uses.
+      Verified end to end, sandbox included, self-scan included
+- [ ] **Managed cloud deployment** — the Terraform under `deploy/*.tf` was
+      applied once, to GCP; its billing account has since lapsed and the
+      project sits frozen (`11-phase5-handoff.md`). Load testing and
+      observability were never reached
 
 Private repositories use a GitHub App rather than stored access tokens, so
 credentials expire hourly and are never persisted.
 
-Two of the findings SentinelOps reported about itself were its own missing CI
-and its own missing metrics. **CI is now in
+Two of the findings SentinelOps reported about itself early on were its own
+missing CI and its own missing metrics. **CI is now in
 [.github/workflows/ci.yml](.github/workflows/ci.yml)** — added because the tool
 kept saying so, which is the only honest way to ship something that grades other
-people's repositories, and it is what took Deployment to 15/15 above. Metrics
-remain deferred, and the remaining finding is a real advisory against a version
-this project pins.
+people's repositories. Metrics remain deferred and are still the largest single
+deduction above. The scan shown at the top of this page reports four findings
+in total, not two — an unpatched advisory, the development-only Docker socket
+mount, one file that outgrew a single sitting's review, and the missing
+metrics — and all four are real, current, and taken from the same command
+anyone can run.
 
 The pipeline runs three independent jobs: backend lint, format and the full
 suite against a real PostgreSQL service; frontend lint, types, tests and build;

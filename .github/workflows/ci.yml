@@ -86,10 +86,15 @@ jobs:
       # is that nothing here is a CI-only invocation. Unset means `development`,
       # which is what the suite runs as locally — so CI now reproduces the local
       # run instead of a mode nobody else ever exercises.
-      # Points the Cloud Storage tests at the emulator started below. Without
-      # it they skip, and a skipped test that only ever runs on one developer's
-      # machine is decoration.
+      # Points the Cloud Storage and S3 tests at the emulators started below.
+      # Without these they skip, and a skipped test that only ever runs on one
+      # developer's machine is decoration.
       STORAGE_EMULATOR_HOST: http://localhost:4443
+      S3_ENDPOINT_URL: http://localhost:9000
+      # MinIO's own defaults, used only against the local emulator below —
+      # never credentials for a real account.
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
 
     defaults:
       run:
@@ -132,6 +137,23 @@ jobs:
           done
           echo "the emulator never came up" >&2
           docker logs fake-gcs >&2
+          exit 1
+
+      - name: Start the S3 emulator
+        # MinIO implements the real S3 API, so the storage tests exercise
+        # boto3 rather than a mock of it — the same reasoning as fake-gcs-server
+        # above, and it is also what the same S3Storage class talks to on R2,
+        # Spaces or real AWS.
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data
+          for _ in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live >/dev/null && exit 0
+            sleep 0.5
+          done
+          echo "the emulator never came up" >&2
+          docker logs minio >&2
           exit 1
 
       - name: Lint

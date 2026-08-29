@@ -30,19 +30,28 @@ dependencies = [
 ]
 
 [dependency-groups]
-# The only cloud SDK in the project, and deliberately not a default dependency.
-# `uv sync` without this group installs nothing from Google, the suite passes,
-# and LocalStorage serves development exactly as before — which is what keeps
-# "no cloud SDK is required to run this" a fact rather than a slogan. Imported
-# inside GcsStorage rather than at module scope, so its absence is a
-# configuration error at startup and not an ImportError halfway through a
+# Two cloud SDKs live in the project, and neither is a default dependency.
+# `uv sync` without these groups installs nothing from Google or AWS, the suite
+# passes, and LocalStorage serves development exactly as before — which is what
+# keeps "no cloud SDK is required to run this" a fact rather than a slogan.
+# Imported inside GcsStorage/S3Storage rather than at module scope, so absence
+# is a configuration error at startup and not an ImportError halfway through a
 # request.
 #
-# The Dockerfile installs it with --group gcs, into the one builder stage both
-# images share — so the worker carries it too, without ever calling it. See the
-# Dockerfile for why that is cheaper than two builders.
+# The Dockerfile installs both with --group gcs --group s3, into the one
+# builder stage both images share — so the worker carries them too, without
+# ever calling either. See the Dockerfile for why that is cheaper than two
+# builders.
 gcs = [
     "google-cloud-storage>=2.19",
+]
+
+# boto3 speaks a de facto standard rather than one vendor's API — AWS S3,
+# Cloudflare R2, DigitalOcean Spaces, MinIO and GCS's own interop endpoint all
+# accept it — so this group buys portability across most deployable clouds,
+# not only AWS.
+s3 = [
+    "boto3>=1.35",
 ]
 
 dev = [

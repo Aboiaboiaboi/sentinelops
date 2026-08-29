@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.logging import configure_logging
 from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.utils.queue import ArqQueue, set_queue
-from app.utils.storage import GcsStorage, LocalStorage, Storage, set_storage
+from app.utils.storage import GcsStorage, LocalStorage, S3Storage, Storage, set_storage
 
 settings = get_settings()
 
@@ -58,6 +58,17 @@ def _build_storage() -> Storage:
     Constructed eagerly, so a missing SDK or unreadable credentials stop the app
     from starting rather than surfacing on the first download somebody attempts.
     """
+    if settings.storage_bucket and settings.storage_provider == "s3":
+        logger.info(
+            "Storing reports in S3-compatible storage",
+            extra={"bucket": settings.storage_bucket, "endpoint": settings.storage_endpoint_url},
+        )
+        return S3Storage(
+            settings.storage_bucket,
+            endpoint_url=settings.storage_endpoint_url,
+            region=settings.storage_region,
+        )
+
     if settings.storage_bucket:
         logger.info("Storing reports in Cloud Storage", extra={"bucket": settings.storage_bucket})
         return GcsStorage(settings.storage_bucket)

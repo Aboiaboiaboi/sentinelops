@@ -1,0 +1,12 @@
+# Excluded from the build context sent to the daemon. node_modules is the
+# important one: it holds host-platform binaries (esbuild, etc.) that would be
+# wrong inside the container, and `npm ci` in the builder stage reinstalls it
+# from package-lock.json regardless.
+node_modules/
+dist/
+
+.env
+.env.*
+
+*.log
+.DS_Store

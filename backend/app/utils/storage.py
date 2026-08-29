@@ -4,20 +4,22 @@ The second of the two modules permitted to know about a cloud SDK. Generated
 PDF reports go through here; nothing else in the application should ever hold a
 bucket client.
 
-Three implementations: `LocalStorage` writes under a configured directory and is
-what development uses, `GcsStorage` talks to a Cloud Storage bucket and is what
-a deployment uses, and `NullStorage` is the default and refuses. The reason for
-refusing differs from the sandbox's. A missing sandbox must not produce a
-*passing* check; a missing storage backend must not produce a *silently unsaved*
-report. A caller that believes it persisted something and did not is worse off
-than one that got an error.
+Four implementations: `LocalStorage` writes under a configured directory and is
+what development uses, `GcsStorage` talks to a Cloud Storage bucket, `S3Storage`
+talks to anything that speaks the S3 API — real AWS, or an S3-compatible
+endpoint such as Cloudflare R2, DigitalOcean Spaces or MinIO — and `NullStorage`
+is the default and refuses. The reason for refusing differs from the sandbox's.
+A missing sandbox must not produce a *passing* check; a missing storage backend
+must not produce a *silently unsaved* report. A caller that believes it
+persisted something and did not is worse off than one that got an error.
 
-**The cloud SDK is not a dependency of this module.** `google-cloud-storage`
-lives in the optional `gcs` dependency group and is imported inside
-`GcsStorage.__init__`, never at module scope. An install without it imports this
-file, runs the suite, and uses LocalStorage exactly as before — which is what
-keeps "zero cloud SDKs" true of the default install, and with it the argument
-that a second deployment target is a new class here rather than a redesign.
+**Neither cloud SDK is a dependency of this module.** `google-cloud-storage` and
+`boto3` live in the optional `gcs` and `s3` dependency groups and are imported
+inside their respective classes' `__init__`, never at module scope. An install
+without either imports this file, runs the suite, and uses LocalStorage exactly
+as before — which is what keeps "zero cloud SDKs" true of the default install,
+and with it the argument that a new deployment target is a new class here
+rather than a redesign.
 """
 
 import asyncio
@@ -59,6 +61,31 @@ class StorageUnavailable(Exception):
     Raised rather than returned so it cannot be mistaken for a successful
     write. A caller catching this must not report the artefact as saved.
     """
+
+
+def _check_flat_key(key: str) -> None:
+    """Guard shared by every bucket-backed store — GCS and S3 alike.
+
+    A bucket is flat and `../etc/passwd` is a perfectly legal object name, so
+    none of `LocalStorage._resolve`'s containment reasoning transfers — there is
+    no root to escape. The guard is kept anyway, and deliberately: the same key
+    is what `LocalStorage` writes to disk in development, and it reaches a
+    `Content-Disposition` header on the way out. A key that is safe in one
+    backend and not another is a bug that only appears in production.
+
+    An empty key is rejected too. Both GCS and S3 accept one and create an
+    object that cannot be addressed by name afterwards.
+    """
+    if not key or key != key.strip():
+        raise UnsafeStorageKey(f"Storage key must be a non-blank, untrimmed path: {key!r}")
+    if _is_rooted(key):
+        raise UnsafeStorageKey(f"Storage key must be a relative path: {key!r}")
+    if _is_reserved_name(key):
+        raise UnsafeStorageKey(f"Storage key is a reserved device name: {key!r}")
+    # Both separators, because this key is also handed to LocalStorage in
+    # development, where a backslash is one.
+    if ".." in PurePosixPath(key).parts or ".." in PureWindowsPath(key).parts:
+        raise UnsafeStorageKey(f"Storage key escapes the storage root: {key!r}")
 
 
 def _is_reserved_name(key: str) -> bool:
@@ -185,28 +212,8 @@ class GcsStorage:
         self._bucket = storage.Client().bucket(bucket)
 
     def _blob(self, key: str):
-        """Map a key to a blob, refusing anything a filesystem would refuse.
-
-        A bucket is flat and `../etc/passwd` is a perfectly legal object name,
-        so none of `LocalStorage._resolve`'s reasoning transfers — there is no
-        root to escape. The guard is kept anyway, and deliberately: the same key
-        is what `LocalStorage` writes to disk in development, and it reaches a
-        `Content-Disposition` header on the way out. A key that is safe in one
-        backend and not the other is a bug that only appears in production.
-
-        An empty key is rejected too. GCS accepts it and creates an object that
-        cannot be addressed by name afterwards.
-        """
-        if not key or key != key.strip():
-            raise UnsafeStorageKey(f"Storage key must be a non-blank, untrimmed path: {key!r}")
-        if _is_rooted(key):
-            raise UnsafeStorageKey(f"Storage key must be a relative path: {key!r}")
-        if _is_reserved_name(key):
-            raise UnsafeStorageKey(f"Storage key is a reserved device name: {key!r}")
-        # Both separators, because this key is also handed to LocalStorage in
-        # development, where a backslash is one.
-        if ".." in PurePosixPath(key).parts or ".." in PureWindowsPath(key).parts:
-            raise UnsafeStorageKey(f"Storage key escapes the storage root: {key!r}")
+        """Map a key to a blob, refusing anything a filesystem would refuse."""
+        _check_flat_key(key)
         return self._bucket.blob(key)
 
     async def upload(self, key: str, content: bytes, *, content_type: str) -> str:
@@ -239,6 +246,89 @@ class GcsStorage:
                 # because the credentials are wrong would re-render on every
                 # single request and never say why.
                 return None
+
+        return await asyncio.to_thread(_read)
+
+
+class S3Storage:
+    """S3-API backed storage for a single bucket.
+
+    Not "AWS support" so much as most-clouds support: S3's API is the de facto
+    standard, so this one class also serves Cloudflare R2, DigitalOcean Spaces,
+    MinIO and GCS's own interop endpoint — an `endpoint_url` is the entire
+    difference between them. Credentials are never passed in, the same
+    discipline as `GcsStorage`: boto3 resolves them from the environment, which
+    on EC2 or ECS means the instance or task role attached to the process.
+    """
+
+    def __init__(self, bucket: str, *, endpoint_url: str = "", region: str = "") -> None:
+        # Imported here rather than at module scope, for the same reason as
+        # google-cloud-storage in GcsStorage above: everything else in this file
+        # works without the SDK installed, and a top-level import would make a
+        # second cloud library a hard requirement of importing the boundary.
+        import boto3  # noqa: PLC0415
+        from botocore.config import Config  # noqa: PLC0415
+
+        self._bucket = bucket
+        self._client = boto3.client(
+            "s3",
+            # Empty means real AWS, resolved by boto3's own endpoint logic. Set
+            # for anything S3-compatible — R2, Spaces, MinIO, the GCS interop
+            # endpoint — where the value is the provider's own URL.
+            endpoint_url=endpoint_url or None,
+            region_name=region or None,
+            # Path-style addressing (bucket in the path, not the host) is what
+            # every non-AWS S3-compatible endpoint expects, and what a local
+            # MinIO cannot serve any other way — virtual-hosted style needs a
+            # bucket name that is also a valid DNS subdomain of the endpoint.
+            # Real AWS accepts path-style too, so this is safe unconditionally
+            # rather than only when endpoint_url is set.
+            config=Config(s3={"addressing_style": "path"}),
+        )
+
+    def _key(self, key: str) -> str:
+        """Validate a key, refusing anything a filesystem would refuse."""
+        _check_flat_key(key)
+        return key
+
+    async def upload(self, key: str, content: bytes, *, content_type: str) -> str:
+        key = self._key(key)
+
+        def _write() -> None:
+            self._client.put_object(
+                Bucket=self._bucket, Key=key, Body=content, ContentType=content_type
+            )
+
+        # boto3 is synchronous. Off the event loop for the same reason as every
+        # other backend here — a blocking round trip in an async handler stalls
+        # every other request on the same worker.
+        await asyncio.to_thread(_write)
+        # s3:// rather than an https URL, matching GcsStorage's gs://: the
+        # locator is opaque to callers and is stored, and a presigned or public
+        # URL would expire or leak.
+        return f"s3://{self._bucket}/{key}"
+
+    async def download(self, key: str) -> bytes | None:
+        from botocore.exceptions import ClientError  # noqa: PLC0415
+
+        key = self._key(key)
+
+        def _read() -> bytes | None:
+            try:
+                response = self._client.get_object(Bucket=self._bucket, Key=key)
+                return response["Body"].read()
+            except ClientError as exc:
+                # A miss, and an ordinary one — this is a cache read. AWS S3
+                # answers NoSuchKey; MinIO and some S3-compatible providers
+                # answer a bare 404 with no such code, so both are checked.
+                # Every other failure, including a permission error and an
+                # unreachable bucket, propagates: answering "nothing is stored
+                # there" because the credentials are wrong would re-render on
+                # every single request and never say why.
+                error = exc.response.get("Error", {})
+                if error.get("Code") in {"NoSuchKey", "404"}:
+                    return None
+                raise
 
         return await asyncio.to_thread(_read)
 
