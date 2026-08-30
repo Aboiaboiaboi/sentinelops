@@ -27,6 +27,9 @@ dependencies = [
     # records and which does not import on Windows — where this suite is run
     # locally. Pure Python installs everywhere. See services/report_renderer.py.
     "fpdf2>=2.8",
+    # /metrics (app/observability.py). Pure Python, no C extension, no reason
+    # for an optional group the way the cloud SDKs below get one.
+    "prometheus-client>=0.21",
 ]
 
 [dependency-groups]

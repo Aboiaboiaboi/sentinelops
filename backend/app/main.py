@@ -4,13 +4,19 @@ from contextlib import asynccontextmanager
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
 from app.api import auth, findings, github, projects, reports, scans
 from app.config import get_settings
 from app.logging import configure_logging
+from app.observability import (
+    CONTENT_TYPE_LATEST,
+    PrometheusMiddleware,
+    render_metrics,
+    set_metrics_redis,
+)
 from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.utils.queue import ArqQueue, set_queue
 from app.utils.storage import GcsStorage, LocalStorage, S3Storage, Storage, set_storage
@@ -40,6 +46,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     set_queue(ArqQueue(pool))
     set_storage(_build_storage())
+    # Same pool ArqQueue uses — GET /metrics reads arq's queue length and the
+    # worker's job-outcome counters off it, both plain Redis reads.
+    set_metrics_redis(pool)
     try:
         yield
     finally:
@@ -105,6 +114,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added after CORS, which Starlette therefore wraps outermost — a CORS
+# preflight never needs timing, and this way it never sees one.
+app.add_middleware(PrometheusMiddleware)
 
 app.include_router(auth.router)
 app.include_router(projects.router)
@@ -123,3 +135,12 @@ def health() -> dict[str, str]:
     fails for reasons the process cannot act on.
     """
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    """Prometheus scrape target. Internal-only by construction — see
+    app/observability.py's module docstring and frontend/Caddyfile, which
+    proxies /api/* and nothing else.
+    """
+    return Response(content=await render_metrics(), media_type=CONTENT_TYPE_LATEST)

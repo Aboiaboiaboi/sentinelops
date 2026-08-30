@@ -184,10 +184,43 @@ def classify_clone_failure(error: CloneError) -> tuple[ScanErrorCategory, str]:
 async def run_scan(ctx: dict[str, Any], scan_id: str) -> None:
     """arq entrypoint. Opens a session and delegates.
 
-    Nothing but session management belongs here — see `execute_scan`.
+    Session management plus one thing that has to happen at this exact
+    boundary: recording the job's outcome for app/observability.py's
+    /metrics to read. It belongs here, not in execute_scan, because arq
+    itself can raise around execute_scan (job_timeout) without execute_scan
+    ever getting a chance to record anything — the outcome must be captured
+    at the actual entrypoint.
+
+    This is the arq job's outcome (did the worker process crash), not the
+    scan's — execute_scan catches CloneError and records a normal *scan*
+    failure via scan_service.fail_scan without raising, so a badly-typed
+    repository URL counts as a "success" job here. The dashboard this feeds
+    (deploy/compose/observability/grafana/dashboards/scans-and-queue.json)
+    is therefore reading "did the worker stay up", not "did users' scans
+    pass" — a real distinction worth keeping in mind reading the graph, not
+    a bug in either place.
     """
     async with SessionLocal() as db:
-        await execute_scan(db, scan_id=uuid.UUID(scan_id))
+        try:
+            await execute_scan(db, scan_id=uuid.UUID(scan_id))
+        except Exception:
+            await _record_job_outcome(ctx, "failure")
+            raise
+        else:
+            await _record_job_outcome(ctx, "success")
+
+
+async def _record_job_outcome(ctx: dict[str, Any], outcome: str) -> None:
+    """INCR a plain Redis counter app/observability.py mirrors at scrape
+    time. Not an in-process prometheus_client Counter: the worker and the
+    API are separate processes, so a Counter here would never be visible to
+    the API's /metrics — Redis is the coordination point, the same role it
+    already plays for the queue itself (app/utils/queue.py).
+
+    ctx["redis"] is the pool arq's own Worker puts there before calling any
+    job function — no separate connection needed.
+    """
+    await ctx["redis"].incr(f"sentinelops:jobs:{outcome}")
 
 
 async def execute_scan(db: AsyncSession, *, scan_id: uuid.UUID) -> None:
