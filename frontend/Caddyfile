@@ -48,6 +48,11 @@
 		}
 	}
 
+	# The bare path with no trailing slash (/grafana) doesn't match
+	# /grafana/* above, and falls through to the SPA catch-all below as a
+	# 404 instead. Redirect it to the form that does match.
+	redir /grafana /grafana/
+
 	# Everything else is the built SPA. try_files falls back to index.html for
 	# any path that is not a real static asset, which is what a client-side
 	# router (react-router-dom) needs — a deep link like /projects/abc must
