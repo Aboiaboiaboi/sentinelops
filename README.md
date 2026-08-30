@@ -514,6 +514,8 @@ the same way the database is, rather than being restarted on every deploy.
 
 ## How it works
 
+**Inside the app**, when you click "Run scan":
+
 ```
 Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
                             │                 ▲
@@ -526,111 +528,111 @@ Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
                                         └─ sandboxed tools (no network)
 ```
 
-The API only creates a scan record and queues a job — it never does the slow
-work, so it answers in milliseconds no matter how big the repository is. The
-worker picks the job up, and the UI polls until the scan reaches a final state.
+The API doesn't do the scanning itself — it just saves a record and drops a
+job in a queue, so it can reply instantly no matter how big the repo is. A
+separate worker process picks that job up, does the actual clone and scan,
+and the browser just polls for a result. Each of the 6 categories runs
+independently, so if one of them breaks, the scan still finishes with the
+rest — that one category just loses its points instead of the whole scan
+failing.
 
-Each category runs independently. If one fails, the scan still completes with
-the others, and the failed category costs its weight rather than silently
-disappearing.
+**Around the app**, in production:
+
+```
+Terraform (deploy/aws/)
+    │  provisions
+    ▼
+AWS EC2 instance ──► Caddy (HTTPS + reverse proxy)
+    │                      │
+    │                      ├──► the app itself (diagram above)
+    │                      └──► Grafana (dashboards, password-protected)
+    │
+    └──► Prometheus + Loki + Alloy
+             (collect metrics & logs from every container)
+```
+
+The server itself — the VM, its network rules, its storage — is created by
+Terraform, so standing up the whole environment from nothing is one command,
+not a checklist. Caddy sits in front of everything as the single public
+door: it gets the HTTPS certificate and decides what goes where. Alongside
+the app, a monitoring stack watches it — Prometheus polls the app for
+numbers (traffic, queue size), Loki collects logs, and Grafana turns both
+into dashboards.
 
 ### Project layout
 
 | Path | Contents |
 |---|---|
-| `backend/app/api/` | HTTP layer. Thin — calls `services/`, never the ORM directly |
-| `backend/app/services/` | Business logic, shared by the API and the worker |
-| `backend/app/scanners/` | A repository in, check results out. No database, no API |
-| `backend/app/scanners/security/tools/` | One module per sandboxed tool: build the spec, parse the output, return a `CheckResult` |
-| `backend/app/workers/` | Queue tasks and repository cloning |
-| `backend/app/utils/sandbox.py` | The container boundary. The only place that starts a process the repository can influence |
-| `backend/app/services/report_*.py` | What the report says, how it is drawn, and when a stored copy may be reused — three files because the middle one is the replaceable part |
-| `backend/app/assets/fonts/` | DejaVu, vendored. fpdf2's built-in fonts are latin-1 only, and repository text is not |
-| `backend/app/models/` `schemas/` | Database tables, and API shapes — deliberately separate |
-| `frontend/src/api/` `hooks/` | Fetch functions, and the query wrappers around them |
-| `frontend/src/pages/` `components/` | Screens and the pieces they're built from |
+| `backend/app/api/` | The HTTP layer — thin, just calls into `services/` |
+| `backend/app/services/` | The actual business logic, shared by both the API and the worker |
+| `backend/app/scanners/` | Takes a repository in, returns check results out — nothing else |
+| `backend/app/scanners/security/tools/` | One file per external tool (Gitleaks/Trivy/Semgrep) |
+| `backend/app/workers/` | Queue handling and repository cloning |
+| `backend/app/utils/sandbox.py` | The only code allowed to start a container that runs on a stranger's code |
+| `backend/app/models/` `schemas/` | Database tables, and API request/response shapes — kept deliberately separate |
+| `frontend/src/api/` `hooks/` | Functions that call the backend, and the React hooks wrapping them |
+| `frontend/src/pages/` `components/` | Screens, and the reusable pieces they're built from |
+| `deploy/aws/` | Terraform — creates the actual live server this runs on |
+| `deploy/compose/` | The portable version — same app, one Docker Compose file, runs on any Linux server |
 
-Three boundaries do real work:
+A couple of boundaries worth knowing about:
 
-- **`schemas/` is not `models/`.** The `User` table has a `password_hash`; no
-  response schema references it, so it cannot leak.
-- **`scanners/` imports nothing from the app** except the sandbox boundary. No
-  database, no queue, no HTTP, and no configuration — a tool declares *that* it
-  needs the warmed cache, and the runner knows which volume that is. Which is
-  why every scanner is testable against a directory in `tmp_path` and a fake
-  runner.
-- **`utils/storage.py`, `utils/queue.py` and `utils/sandbox.py`** are the only
-  files allowed to know how work leaves the process — a bucket, a broker, or a
-  container runtime. **Zero cloud SDKs are a default dependency** — the two
-  that exist (`google-cloud-storage`, `boto3`) live in optional groups and are
-  imported inside the class that needs them — so a default install runs and
-  tests with none of them present; swapping Redis for SQS, or Docker for
-  Cloud Run Jobs, is a change in one file. Two of the three default to
-  refusing, for different reasons: with no container runtime a tool check
-  reports *errored*, never *passed*; with no storage configured a write raises
-  rather than being discarded, because a caller that believes it saved
-  something and did not is worse off than one that got an error.
+- **API response shapes (`schemas/`) are kept separate from database tables
+  (`models/`)** on purpose. The `User` table has a password hash column; no
+  API response type even references it, so there's no way for it to
+  accidentally leak in a response.
+- **The scanning code doesn't know about the database, the API, or the
+  cloud.** It only knows how to read a repository and return results — which
+  means every scanner can be tested against a plain folder on disk, no real
+  app running required.
 
 ### Security
 
-Repositories are treated as hostile input, because they are:
+Since this app clones and inspects other people's code, it treats every
+repository as untrusted input:
 
-- Shallow clone, no submodules, no history, no LFS objects
-- Hard timeout, byte and file-count caps
-- `ext::` URLs blocked — they hand git a shell command to run
-- Git hooks disabled, host git configuration ignored
-- Symlinks are never followed, so a link to `/etc` reads nothing
-- Every clone is deleted afterwards, whether the scan succeeded or not
-- The worker runs as a non-root user, with application code read-only to it
-- Only the worker image contains `git` — the API cannot clone anything
-- Credentials are redacted from git's output before it reaches a log or the
-  database, and a failure's stored detail is fixed text chosen by the error
-  type — never the error text itself, which can echo a URL carrying a token
+- Clones are shallow (no full history), and only the code itself — no
+  submodules, no large file storage
+- Hard limits on how long a clone can take and how much it can download
+- Git hooks are disabled, so a repo can't run its own scripts during clone
+- Symbolic links are never followed, so a link pointing outside the repo
+  (like `/etc`) can't be used to read the host machine
+- Every clone is deleted after the scan, success or failure
+- The worker runs as a non-root user, and only the worker (not the API) has
+  `git` installed at all
 
-The security tools go further, because they are the only thing here that
-*executes* third-party binaries against a stranger's code. Each runs in its own
-container with **no network at all**, a read-only root filesystem, every Linux
-capability dropped, `no-new-privileges`, bounded memory, CPU and process count,
-as uid 65534, with the checkout mounted read-only. How many may run at once is
-bounded too, so a busy worker queues rather than handing the host's OOM killer
-a choice between Postgres and a scan. Its vulnerability database
-arrives through a cache volume it can only read, because it has no way to fetch
-one. Images are pinned by tag — an unpinned tool could change under a scan and
-make a score change unexplainable — and the sandbox refuses to run at all rather
-than run something unisolated.
+The three tool-backed security checks go further, since they're the only
+part of this system that actually **runs** other people's code (via
+Gitleaks/Trivy/Semgrep): each runs in its own locked-down container with no
+network access at all, read-only filesystem access, every extra permission
+stripped, and a memory/CPU cap. If a scan needed to trust a sandbox, it can't
+— the sandbox refuses to run rather than run unsafely.
 
-Passwords use bcrypt, hashed off the event loop. The auth token is an `httpOnly`
-cookie rather than localStorage, since a tool that assesses other people's
-security shouldn't use an XSS-readable token store. Login runs in constant time
-whether or not the account exists, so it can't be used to enumerate users. Auth
-endpoints are rate limited.
+On the account side: passwords are hashed with bcrypt, the login session is
+an `httpOnly` cookie (invisible to JavaScript, so it can't be stolen via a
+script-injection bug), login takes the same amount of time whether or not
+the account exists (so it can't be used to guess valid emails), and login
+attempts are rate-limited.
 
-### How much of this is tied to one cloud
+### How tied to one cloud is this, really
 
-Not "cloud agnostic" — that claim is usually either false or expensive. What
-this is instead is **confined**, and the surface is small enough to name
-exactly.
+Not "runs anywhere with zero changes" — that claim is usually either untrue
+or very expensive to actually achieve. What's true here is narrower and
+easier to check: only a **small, named part** of the code knows it's talking
+to a specific cloud.
 
-| Tier | What it is | What moving costs |
+| Layer | What it is | Cost to move it |
 |---|---|---|
-| **Confined** | Three modules — `utils/queue.py`, `utils/storage.py`, `utils/sandbox.py` — are the only places allowed to know about an execution backend or a cloud SDK. Each is a Protocol with a real implementation, a refusing default, and a `set_x()` called once at startup | A new class in one file. Nothing in `api/`, `services/` or `scanners/` changes, because none of them can name a bucket or start a container |
-| **Already portable** | `S3Storage` speaks the S3 API, which most clouds speak too — real AWS, Cloudflare R2, DigitalOcean Spaces, MinIO, or GCS through its own interop endpoint. `DockerSandbox` runs on any Linux host with a Docker daemon, which is every cloud's VM | `STORAGE_ENDPOINT_URL` and a bucket name. Nothing to write |
-| **Substitutable** | Postgres and Redis | A connection string. Cloud SQL, RDS, Neon, Upstash or a container are the same two protocols behind different hostnames |
-| **Actually locked in** | `deploy/*.tf` — Cloud Run, Cloud SQL, Memorystore, GCP IAM | Infrastructure-as-code is provider-specific by nature, and this is the one deployment path that names a cloud. `deploy/compose/` is the answer for a target that must not: same application, one Docker Compose file, any VM |
+| **Fully swappable** | Three files — `utils/queue.py`, `utils/storage.py`, `utils/sandbox.py` — are the *only* places allowed to know about a specific cloud service or SDK | Write one new file. Nothing in the API, business logic, or scanners changes at all |
+| **Already works elsewhere** | Object storage (`S3Storage`) speaks the standard S3 API, which AWS, Cloudflare R2, DigitalOcean Spaces, and MinIO all understand. The sandbox just needs a Docker daemon, which every cloud's VM has | Change a URL and a bucket name — no code |
+| **Just a connection string** | Postgres and Redis | Point at a managed version of either (RDS, Neon, Upstash, etc.) — same protocol, different address |
+| **Actually cloud-specific** | The Terraform itself — `deploy/aws/` provisions real AWS resources (EC2, S3, IAM) by name. This is the live, currently-running deployment | Terraform for a different cloud would need to be written from scratch — which is exactly why `deploy/compose/` also exists: same app, same Docker images, no cloud-specific code, runs on any plain Linux server |
 
-Two rules keep the first two rows honest rather than aspirational. **No cloud
-SDK is a default dependency** — `google-cloud-storage` and `boto3` live in
-optional dependency groups and are imported inside the class that needs them,
-so an install with neither present still runs, still tests, and fails loudly at
-the boundary rather than silently at import. And **the application never names
-a project, a region or a bucket**: those arrive as environment variables, set
-by whatever infrastructure created them.
-
-The honest summary: moving object storage between clouds is an environment
-variable, moving the sandboxed scanners is nothing at all if the target is a
-VM, and moving the managed-infrastructure deployment is a rewrite of
-`deploy/*.tf` — which is what `deploy/compose/` exists to make optional rather
-than mandatory.
+Two rules keep the "swappable" claim actually true instead of aspirational:
+no cloud SDK is installed by default (they're optional, only pulled in if
+that feature's actually used), and the application code itself never
+hardcodes a project name, region, or bucket — those are always environment
+variables, set by whatever infrastructure is running it.
 
 ---
 
