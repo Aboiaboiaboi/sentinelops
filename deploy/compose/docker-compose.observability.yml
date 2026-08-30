@@ -123,6 +123,10 @@ services:
       # exposes.
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # Grafana refuses to auto-refresh faster than this by default (5s
+      # floor) — dashboards here are set to refresh every 1s, so the floor
+      # has to move too or the UI silently clamps back up to 5s.
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: 1s
     volumes:
       - grafana_data:/var/lib/grafana
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro

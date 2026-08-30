@@ -1,9 +1,11 @@
 # Scraped by the prometheus container in docker-compose.observability.yml.
-# 15s: frequent enough to see a scan's queue depth move in near-real-time on
-# a dashboard, infrequent enough that four targets cost nothing on a small VM.
+# 1s: sub-2-second feel on the dashboards, at the cost of ~5x the storage
+# writes/scrape load of the previous 5s setting — still trivial for four
+# targets with this few metrics on a mostly-idle VM. If retention math ever
+# gets tight, this is the first knob to turn back up.
 global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
+  scrape_interval: 1s
+  evaluation_interval: 1s
 
 scrape_configs:
   - job_name: prometheus

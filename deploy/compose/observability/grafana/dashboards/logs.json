@@ -6,7 +6,7 @@
   "editable": true,
   "tags": ["sentinelops"],
   "time": { "from": "now-1h", "to": "now" },
-  "refresh": "10s",
+  "refresh": "1s",
   "templating": {
     "list": [
       {
@@ -14,7 +14,7 @@
         "type": "query",
         "datasource": { "type": "loki", "uid": "loki" },
         "query": "label_values(service)",
-        "refresh": 2,
+        "refresh": 1,
         "includeAll": true,
         "multi": false,
         "current": { "text": "All", "value": "$__all" }
