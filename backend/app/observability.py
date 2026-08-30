@@ -109,6 +109,14 @@ class PrometheusMiddleware:
         route = scope.get("route")
         route_path = route.path if route is not None else "unmatched"
 
+        # /metrics itself is excluded: counting Prometheus's own scrape as
+        # "traffic" is misleading (it would show a flat N req/s on the API
+        # dashboard purely from the scrape interval, not real usage) and
+        # tells you nothing useful either way — Prometheus's own scrape
+        # duration/success is already visible in its own UI.
+        if route_path == "/metrics":
+            return
+
         REQUEST_COUNT.labels(method=method, route=route_path, status=str(status_code)).inc()
         REQUEST_LATENCY.labels(method=method, route=route_path).observe(duration)
 
