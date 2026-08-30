@@ -4,11 +4,11 @@
 
 **Is this application ready for production?**
 
-Point SentinelOps at a Git repository. It clones it, runs 31 checks across six
-categories, and gives you a score out of 100 with specific findings — what's
-wrong, why it matters, and what to do about it. It also tells you which commit
-it looked at, what changed since the last scan, and what it *verified* rather
-than only what broke.
+Point SentinelOps at a Git repository. It clones it, checks it against 31
+things that commonly go wrong before launch, and gives you a score out of 100
+with specific findings — what's wrong, why it matters, and what to do about
+it. It also shows which commit it looked at, what changed since the last
+scan, and what it *confirmed was fine*, not just what broke.
 
 [Quick start](#quick-start-5-minutes) ·
 [What it checks](#what-it-checks) ·
@@ -17,94 +17,6 @@ than only what broke.
 [How it works](#how-it-works)
 
 </div>
-
----
-
-## What it does
-
-You give it a repository URL. A few seconds later you get something like this:
-
-Here is SentinelOps scanning **itself**, which is the real output of the
-commands below rather than an illustration:
-
-```
-sentinelops                                        94 / 100    Grade A
-6 of 6 categories reported
-31 checks: 25 passed · 4 skipped · 2 failed
-
-  Security         25 / 25   ████████████████████
-  Architecture     20 / 20   ████████████████████
-  Reliability      20 / 20   ████████████████████
-  Deployment       13 / 15   █████████████████░░░
-  Scalability      10 / 10   ████████████████████
-  Observability     6 / 10   ████████████░░░░░░░░
-```
-
-Two findings, and both are deliberate rather than overlooked. Deployment lost
-two points for a real reason: `docker-compose.yml` mounts the Docker socket
-into the worker so `DockerSandbox` can start sibling containers for the
-tool-backed security checks. Root-on-the-host, granted on purpose, in a file
-marked development-only — the finding exists to catch exactly the case where
-that line gets copied into something that ships, and it is expected to stay on
-this scoreboard permanently rather than be engineered away.
-
-Each finding tells you what it found and what to do:
-
-> **No metrics or error tracking** · MEDIUM · −4
-> No metrics, tracing, or error-reporting library was found. Nothing measures
-> latency, error rate or throughput, and no exception is reported anywhere — so
-> the first notice that the service is broken comes from whoever is using it.
->
-> **Recommendation:** Export a handful of metrics that describe user-visible
-> health, and send unhandled exceptions to an error tracker so they are seen
-> without being hunted.
-
-That one is the honest gap: real feature work, not yet built, and it is on the
-roadmap below rather than hidden. Two more findings from earlier scans — a
-vulnerable dependency and an oversized file — are already fixed, upgraded and
-split respectively, and no longer appear.
-
-Every scan is downloadable as a PDF that says the same things this page does —
-the score, the category breakdown, each finding with its recommendation, and all
-31 checks including the ones that were skipped and why.
-
-It **reads** code and configuration. It never runs the repository, deploys
-anything, or changes it.
-
----
-
-## What it's for
-
-**A backend service you are about to deploy.** Something containerised, that
-serves HTTP, talks to a database, and might one day run as more than one copy.
-Django, FastAPI, Express, NestJS, Rails, Spring Boot — on Cloud Run, Fly,
-Render, ECS or Kubernetes.
-
-That is the shape all 31 checks assume, and the question they answer is
-**"what did we forget?"**. Not the interesting problems — the boring, fatal
-ones. No CI. No healthcheck. Container running as root. Base image unpinned. A
-credential committed last March. No timeout on the payment API call. Sessions
-kept in process memory, which works perfectly until the day you scale to two
-instances.
-
-| Good fit | Why |
-|---|---|
-| A product or SaaS API before launch | Every check applies, and 100 is genuinely reachable |
-| Internal tools and admin dashboards | Usually the worst offenders, because "it's only internal" |
-| A codebase you have just inherited | 31 answers about what is actually there beats a week of reading |
-| One repository per service, scanned repeatedly | The score moving is worth more than the score |
-
-| Poor fit | Why |
-|---|---|
-| Static sites, libraries, mobile and CLI apps | Nothing is deployed, so most of the rubric does not apply |
-| Notebooks and research code | No service to assess |
-| A monorepo holding several services | It scans a repository as one unit, so one weak service hides inside a good average |
-
-Two honest limits. **Scores only compare like with like** — a CLI tool has all
-three scalability checks skipped, so it cannot pass 90, and its 85 is not a web
-service's 85. And **it never runs your code**, so anything that only appears at
-runtime is invisible to it. This is a readiness checklist that shows its work,
-not a penetration test.
 
 ---
 
@@ -128,17 +40,17 @@ cd sentinelops
 docker compose up -d
 ```
 
-The first run takes a few minutes while it downloads and builds. It starts five
-things: a database, a queue, a one-off database setup job, the API, and the
-background worker that does the scanning.
+First run takes a few minutes to download and build. It starts five things:
+a database, a queue, a one-off database setup job, the API, and the
+background worker that actually runs the scans.
 
-Two more short-lived jobs run alongside them and then exit. They download the
-vulnerability database and rule set that the security tools need, into a cache
-volume — roughly 100 MB over the wire and about 1.1 GB on disk. The tools
-themselves run with no network at all, so this is the only moment that data can
-arrive. Nothing waits on it: the rest of the app is usable immediately, and
-until the cache is ready the checks that depend on it report *errored* rather
-than pretending your repository is clean.
+Two more short jobs run alongside them and exit on their own — they're
+downloading the vulnerability database and rule set the security tools need
+(~100 MB, ~1.1 GB on disk once unpacked). This is the only moment anything
+gets downloaded; the scanners themselves run with no network access at all.
+You don't need to wait for this — the app is usable right away, and until
+that data's ready, the checks that depend on it just report themselves as
+"not run yet" instead of pretending your repo is clean.
 
 Check it's alive:
 
@@ -146,8 +58,8 @@ Check it's alive:
 curl localhost:8000/health
 ```
 
-You should see `{"status":"ok"}`. If you'd rather look than type, open
-<http://localhost:8000/docs> for the interactive API documentation.
+You should see `{"status":"ok"}`. Prefer clicking to typing? Open
+<http://localhost:8000/docs> for the interactive API docs instead.
 
 ### 3. Start the app
 
@@ -159,8 +71,8 @@ npm run dev
 
 ### 4. Use it
 
-Open **<http://localhost:5173>**, create an account (it's local — nothing leaves
-your machine), add a repository URL, and click **Run scan**.
+Open **<http://localhost:5173>**, create an account (it's local — nothing
+leaves your machine), add a repository URL, and click **Run scan**.
 
 Try `https://github.com/pallets/click` if you want something to test with.
 
@@ -177,8 +89,8 @@ docker compose down -v    # stop and delete the database and caches too
 **`docker compose up` fails immediately** — Docker Desktop probably isn't
 running. Start it and wait for the whale icon to stop animating.
 
-**Port already in use** — something else is on 8000, 5173, 5432 or 6379. Stop
-it, or change the port mapping in `docker-compose.yml`.
+**Port already in use** — something else is on 8000, 5173, 5432 or 6379.
+Stop it, or change the port mapping in `docker-compose.yml`.
 
 **The page loads but nothing works** — check the API is up with
 `curl localhost:8000/health`. If not, `docker compose logs backend`.
@@ -187,10 +99,10 @@ it, or change the port mapping in `docker-compose.yml`.
 `docker compose ps` should show `worker` as healthy; `docker compose logs worker`
 will say why if it isn't.
 
-**The security tool checks all say "errored"** — the worker could not start a
-sandbox. `docker compose logs worker | grep sandbox` says which: an unreachable
-Docker daemon, or a cache volume that has not been warmed yet. The warm jobs run
-on `docker compose up` and can be re-run on their own with
+**The security checks all say "errored"** — the worker couldn't start a
+sandbox container. `docker compose logs worker | grep sandbox` says why:
+usually either Docker itself isn't reachable, or that cache from step 2
+hasn't finished yet. You can re-run just that step with
 `docker compose up warm-trivy warm-semgrep`.
 
 **Want to see the app without a backend at all?**
@@ -201,10 +113,89 @@ echo "VITE_USE_FIXTURES=true" > .env.local
 npm run dev
 ```
 
-Every screen works against built-in sample data, including the live-updating
-scan progress. Set it back to `false` to use the real thing.
+Every screen works against built-in sample data, including the
+live-updating scan progress. Set it back to `false` to use the real thing.
 
 </details>
+
+---
+
+## What it does
+
+You give it a repository URL. A few seconds later you get something like
+this — a real scan of **this repository, run just now**, not a mockup:
+
+```
+sentinelops                                        98 / 100    Grade A
+6 of 6 categories reported
+31 checks: 26 passed · 4 skipped · 1 failed
+
+  Security         25 / 25   ████████████████████
+  Architecture     20 / 20   ████████████████████
+  Reliability      20 / 20   ████████████████████
+  Scalability      10 / 10   ████████████████████
+  Observability    10 / 10   ████████████████████
+  Deployment       13 / 15   █████████████████░░░
+```
+
+One finding, and it's deliberate rather than overlooked:
+
+> **Container granted host-level access** · HIGH · −2
+> `docker-compose.yml` mounts the Docker socket into a container, which is
+> effectively root on the host machine. This is a real and common pattern in
+> local development (it's how the security scanners here start their own
+> sandboxed tool containers) — but it's the kind of line that's easy to
+> forget about and accidentally carry into something that actually ships.
+>
+> **Recommendation:** keep this out of anything deployed for real. If a
+> container genuinely needs it, grant only the specific permission it needs
+> instead of full access.
+
+It's left on the scoreboard on purpose — it's a real trade-off, not a bug, and
+the finding exists to make sure it never quietly ends up somewhere it
+shouldn't.
+
+Every scan can also be downloaded as a PDF with the same score, breakdown,
+findings, and all 31 checks (including the ones skipped, and why).
+
+It only **reads** the code. It never runs the repository, deploys it, or
+changes anything in it.
+
+---
+
+## What it's for
+
+**A backend service you're about to put into production.** Something
+containerized, that serves HTTP, talks to a database, and might eventually
+run as more than one copy — a FastAPI/Django/Express/Rails/Spring app, headed
+for something like Cloud Run, Fly, Render, ECS, or Kubernetes.
+
+That's the shape every check assumes, and the question they're all really
+asking is **"what did we forget?"** — not the interesting problems, the
+boring fatal ones: no CI, no healthcheck, container running as root, an
+unpinned base image, a credential committed months ago, no timeout on an
+outbound API call, session data kept in memory (works fine until you run a
+second copy of the app).
+
+| Good fit | Why |
+|---|---|
+| A product or SaaS API before launch | Every check applies, and 100 is genuinely reachable |
+| Internal tools and admin dashboards | Usually the worst offenders, because "it's only internal" |
+| A codebase you've just inherited | 31 concrete answers beats a week of reading unfamiliar code |
+| One repo, scanned repeatedly over time | Watching the score move matters more than any single number |
+
+| Poor fit | Why |
+|---|---|
+| Static sites, libraries, mobile and CLI apps | Nothing gets deployed as a service, so most checks don't apply |
+| Notebooks and research code | There's no service here to assess |
+| A monorepo holding several services | It scores the repo as one unit, so one weak service can hide inside a good average |
+
+Two honest limits worth knowing. **Scores only compare like with like** — a
+CLI tool skips all three scalability checks, so it can never reach 90, and
+its 85 doesn't mean the same thing as a web service's 85. And **it never runs
+your code**, so anything that only shows up at runtime is invisible to it.
+Think of it as a readiness checklist that shows its work, not a penetration
+test.
 
 ---
 
@@ -221,82 +212,90 @@ Six categories, weighted to sum to 100, and 31 individual checks:
 | **Observability** | 10 | 3 | logging, structured output, metrics and error tracking |
 | **Scalability** | 10 | 3 | in-memory state, local file storage, connection pooling |
 
-All six scanners are live, so a spotless repository really can score 100. A
-category that fails to report **contributes nothing** — it isn't quietly
-excluded from the total, so a partial scan can't masquerade as a thorough one.
+All six categories are fully working — a genuinely clean repository can score
+a real 100. And a category that couldn't be assessed **contributes nothing**
+rather than being quietly left out of the math, so a partial scan can never
+pass itself off as a thorough one.
 
-The same rule catches a subtler case: a category whose every check was
-*skipped* assessed nothing, so it earns nothing either. Scalability on a CLI
-tool is the plain example — all three of its checks ask what a second copy
-behind a load balancer would do, none of them apply, and paying it the full 10
-would be marks for work nobody did. One passing check is enough to keep the
-category; the rule only bites when nothing ran at all.
+Same idea applies to individual checks: if every check in a category gets
+*skipped* (none of it applied), that category earns zero, not full marks.
+Scalability on a small CLI tool is the clean example — all three of its
+checks are about how the app behaves running as multiple copies, none of
+which applies to a CLI tool, so scoring it a full 10 would be rewarding work
+nobody did. One real passing check is enough to keep the category alive; the
+zero only kicks in when literally nothing could be checked.
 
-The security category is part tooling, part reading. **Gitleaks** answers "is a
-credential committed here?" — it runs in a sandbox with no network, and secrets
-are redacted from its output before SentinelOps ever sees them, so the finding
-records *that* a credential is exposed and never the credential itself.
+The security category mixes real tools with pattern-matching:
 
-**Trivy** answers "does this project pin a version with a published
-vulnerability?" — against a database warmed into a read-only volume, because the
-sandbox has no network to fetch one. A repository with no lockfile it recognises
-is *skipped*, not passed: nothing was demonstrated.
+- **Gitleaks** looks for committed credentials. It runs with no network
+  access, and anything it finds gets redacted before SentinelOps ever sees
+  it — so a finding says *that* a secret is exposed, never what the secret
+  actually is.
+- **Trivy** checks whether your dependencies have a known, published
+  vulnerability, against a database that's downloaded ahead of time (the
+  scanner itself has no internet access when it runs). A project with no
+  recognizable dependency file is *skipped*, not passed — nothing was
+  actually checked.
+- **Semgrep** looks for dangerous *patterns* in the code itself — things
+  like user input flowing straight into a shell command. Only its
+  highest-confidence rules are used; the full rule pack is full of "maybe
+  worth a look" suggestions, and a scanner that nags about maybes stops
+  getting trusted.
 
-**Semgrep** answers "is the shape of this code dangerous whatever values flow
-through it?" — a shell invoked with user input, a query built by string
-formatting. Only rules it rates as **errors** are reported: the full
-`p/security-audit` set includes a great deal of "consider whether" advice, and
-noise is how a scanner earns a reputation for crying wolf.
+The remaining five security checks (credential files, debug mode, TLS
+overrides, container secrets, `.gitignore`) are simple pattern checks rather
+than full tools — cheap to run, tested against real repositories, and
+measured at zero false positives so far.
 
-The five regex checks that remain — credential files, debug mode, TLS overrides,
-container secrets, `.gitignore` — were kept rather than routed through a tool.
-They are dogfooded against real repositories, they cost nothing, and their
-measured false-positive rate is zero.
+### How it avoids false alarms
 
-### It tries hard not to cry wolf
+A scanner that flags things that are actually fine gets ignored — and an
+ignored scanner is useless. So it's deliberately conservative:
 
-A scanner that flags healthy code gets muted, and a muted scanner catches
-nothing. So it only reports what it can evidence:
+- **Doesn't-apply is reported as skipped, never as failed.** A CLI tool
+  isn't expected to have a web health-check endpoint, and that's shown
+  honestly as "skipped," not silently marked as passing either.
+- **Test code is judged differently than real code.** A swallowed error in
+  a test file is normal. A fake API key in test fixtures isn't a leaked
+  secret.
+- **Generated code is left alone.** Telling you to refactor a 4,000-line
+  auto-generated file isn't useful advice.
+- **A filename alone never triggers a finding.** A `.env` file full of
+  placeholder values is a template, not a leak; a `.pem` file is only
+  flagged if it actually looks like a real private key.
 
-- **Checks that don't apply are skipped, not failed.** A CLI tool shouldn't have
-  a health endpoint. A skip is always reported as a skip, never as a pass.
-- **Test code is judged differently.** A swallowed exception in a test is fine,
-  and a fake key in a fixture is a fixture.
-- **Generated code is excluded.** "Split this 4000-line generated client into
-  modules" is not advice anyone can act on.
-- **A filename never convicts on its own.** A `.env` full of `changethis` is a
-  template, a `.pem` is flagged only if its header says *private*, and a library
-  named in a comment is not a library you use.
+Two honest trade-offs that come with being this careful:
 
-Two things this costs, both deliberate:
-
-- **A real credential inside a test directory goes unreported.** The alternative
-  is flagging your own fixtures — on a fresh clone of this repository, Gitleaks
-  finds seven "leaks" and all seven are the security scanner's own test data.
-- **It won't flatter an empty repository either.** No source code means nothing
-  was assessed, so it scores 0 rather than collecting marks for problems nobody
-  could find. It used to score 77.
+- **A real secret hidden inside a test folder can slip through.** The
+  alternative is flagging your own test fixtures constantly — on a clean
+  checkout of this very repo, Gitleaks finds seven "leaks," and all seven
+  are the security scanner's own fake test data.
+- **An empty repository doesn't get an easy pass either.** No real code
+  means nothing could actually be verified, so it scores 0 — not partial
+  credit for problems that simply weren't there to find. (An earlier
+  version of this scored an empty repo 77, which was the bug that got this
+  fixed.)
 
 ---
 
 ## Beyond the score
 
-A number on its own is hard to trust. Every scan also carries the context that
-makes it checkable:
+A single number is hard to trust on its own. Every scan comes with the
+context to actually check it:
 
-| | What you get | Why it exists |
+| | What you get | Why it matters |
 |---|---|---|
-| **Commit context** | The sha, message, author and date of the commit that was scanned | Turns "the score dropped 6" into "the score dropped 6 *at this commit*" |
-| **What was checked** | All 31 checks with an outcome each — passed, failed, skipped with a reason, or errored when a tool could not run | A category at full marks can say *what it verified*, instead of merely having nothing to complain about |
-| **Comparison** | Score and per-category movement against the previous scan, plus the exact checks that flipped | Regressions first, because what broke is what you need to see |
-| **Failure diagnostics** | A category, a plain-language detail, and a suggested fix when a scan fails | A scan that just says "failed" is a dead end |
-| **PDF report** | `GET /scans/{id}/report` — the same score, breakdown, findings and 31 check outcomes as a document | A scan you can attach to a ticket or hand to somebody who does not have a login |
+| **Commit context** | The exact commit that was scanned — SHA, message, author, date | "The score dropped 6" becomes "the score dropped 6 *at this specific commit*" |
+| **Every check's outcome** | All 31 checks, each marked passed, failed, skipped (with a reason), or errored | A perfect score can show you what was actually verified, not just that nothing complained |
+| **Comparison to the last scan** | Score and per-category movement, plus exactly which checks changed | Shows regressions first — what got worse matters most |
+| **Failure diagnostics** | If a scan itself fails, you get which category, a plain explanation, and a suggested fix | Better than a bare "scan failed" with no next step |
+| **PDF report** | `GET /scans/{id}/report` — the full score, breakdown, findings, and all 31 checks as a downloadable document | Something you can attach to a ticket or hand to someone without a login |
 
-The comparison is deliberately conservative and will **decline** to show a
-difference in three cases: when the scoring rules changed between the two scans
-(the delta would measure a change in SentinelOps, not in your repository), when
-a category stopped being assessed (that is not a regression), and for a check
-added since the last scan (we moved, your repository didn't).
+The comparison feature is deliberately cautious — it'll refuse to show a
+before/after difference when: the scoring rules themselves changed between
+scans (that would measure a change in SentinelOps, not your code), a category
+stopped being checkable (not a real regression), or a check is brand new
+since the last scan (nothing to compare it to yet).
 
 ---
 
@@ -335,15 +334,16 @@ cd backend
 uv run python -m app.workers.main
 ```
 
-> Use `python -m app.workers.main`, **not** the `arq` CLI. The CLI applies its
-> own logging config after importing settings, which leaks plain-text lines into
-> an otherwise JSON log stream.
+> Use `python -m app.workers.main`, **not** the `arq` CLI directly — the CLI
+> sets up its own logging after settings are already loaded, which leaks
+> plain-text lines into what's supposed to be a clean JSON log stream.
 
-> **A host-run worker has no sandbox** unless you ask for one, so the tool-backed
-> security checks report *errored* — honestly, rather than passing. To run them,
-> set `SANDBOX_ENABLED=true` (leave `SANDBOX_VOLUME` empty, which bind-mounts the
-> clone by its real path) and `SANDBOX_CACHE_VOLUME=sentinelops_sandbox_cache`
-> after `docker compose up warm-trivy warm-semgrep` has populated it.
+> **A worker running directly on your machine has no sandbox** unless you
+> turn it on, so the tool-backed security checks will honestly report
+> themselves as *errored* rather than fake a pass. To actually run them, set
+> `SANDBOX_ENABLED=true` (leave `SANDBOX_VOLUME` empty) and
+> `SANDBOX_CACHE_VOLUME=sentinelops_sandbox_cache`, after
+> `docker compose up warm-trivy warm-semgrep` has downloaded what they need.
 
 **Frontend:**
 
@@ -353,15 +353,16 @@ npm install
 npm run dev                              # :5173, proxies /api to :8000
 ```
 
-The dev server proxies `/api` to the backend and strips the prefix, keeping the
-browser on one origin — the auth cookie is `httpOnly` and same-origin, so it's
-never readable from JavaScript.
+The dev server forwards `/api` requests to the backend and strips that
+prefix off — this keeps the browser thinking it's talking to one single
+origin, which is why the auth cookie can be `httpOnly` (invisible to
+JavaScript, so it can't be stolen via an XSS bug) without breaking anything.
 
 ### Running the checks
 
 ```bash
 # Backend — 948 tests. Needs Postgres running. The sandbox integration tests
-# skip themselves when no Docker daemon is reachable.
+# skip themselves automatically if no Docker daemon is available.
 cd backend
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
@@ -371,10 +372,11 @@ cd frontend
 npm run typecheck && npm run lint && npm run test && npm run build
 ```
 
-Tests run against a **real Postgres**, not SQLite. The schema uses JSONB, native
-enums and `ON DELETE CASCADE`, none of which SQLite reproduces faithfully — a
-SQLite suite would pass while the real database rejected the same code. A
-disposable `sentinelops_test` database is created and dropped per run.
+Tests run against a **real Postgres**, not SQLite. The database schema uses
+features SQLite doesn't actually support (JSONB, native enums, cascading
+deletes) — a SQLite-based test suite could pass while the real database
+would reject the same code. A throwaway `sentinelops_test` database gets
+created and dropped for each run.
 
 ### Database migrations
 
@@ -384,13 +386,13 @@ uv run alembic revision --autogenerate -m "message"  # create
 uv run alembic downgrade -1                          # undo one
 ```
 
-> **Two things Alembic won't do for you.** It never autogenerates
-> `server_default` unless you declare it on the column, so adding a `NOT NULL`
-> column produces a migration that works on an empty database and fails on a
-> populated one — declare it, and test the migration against real rows. And it
-> won't drop Postgres `ENUM` types in a downgrade, so those need explicit
-> `sa.Enum(name=...).drop()` calls; newer columns use a plain `String` with a
-> Python enum for exactly this reason.
+> **Two things Alembic (the migration tool) won't figure out for you.** It
+> won't auto-generate a default value for existing rows unless you write it
+> yourself — so a new required column can pass on an empty test database and
+> then fail the moment it hits a table with real rows in it. Always write
+> the default explicitly and test against real data. It also can't undo
+> creating a Postgres enum type on its own — that needs an explicit line to
+> drop it, which is part of why newer columns use plain strings instead.
 
 ### Watching a scan
 
@@ -398,43 +400,46 @@ uv run alembic downgrade -1                          # undo one
 docker compose logs -f worker
 ```
 
-Logs are structured JSON throughout, so they're filterable:
+Every log line is structured JSON, so you can filter it like data instead
+of scrolling text:
 
 ```bash
 docker compose logs worker | grep '"category scanned"'
 ```
 
-### Adding a tool-backed check
+### Adding a tool-backed check (Gitleaks/Trivy/Semgrep style)
 
-`backend/app/scanners/security/tools/` has one module per tool, and each owns
-three things: the `SandboxSpec` that runs it, the parsing of its output, and the
-translation into a `CheckResult`. Copy `trivy.py`.
+Each external tool lives in its own file under
+`backend/app/scanners/security/tools/`, and each one is responsible for
+three things: how to run the tool in its sandbox, how to parse what it
+prints, and how to turn that into a pass/fail/skip result. Easiest way in:
+copy `trivy.py` and adapt it.
 
-Before writing a line of it, **run the tool by hand and record its exit codes**.
-Both tools here had a trap: Gitleaks exits 1 for "leaks found" *and* for "I could
-not read that directory" (so it runs with `--exit-code 0`), and Trivy exits 0 on
-findings but 1 with no vulnerability database. Read either backwards and the
-scanner reports a broken run as a clean repository — which is worse than
-reporting nothing at all.
+Before writing any code, **run the actual tool by hand first and check its
+exit codes carefully** — this bit two real tools already. Gitleaks exits
+with the same code for "found leaks" as it does for "couldn't even read the
+folder," so it has to be run with a flag that separates the two. Trivy
+exits 0 when it finds vulnerabilities but 1 if its database is missing.
+Get this backwards and the scanner will happily report a broken tool run as
+"repository is clean" — which is worse than not checking at all.
 
-The rules that follow from that: a tool that could not run is `errored`, never
-`passed`; a question that does not apply — no lockfile, say — is `skipped` with
-a reason; the tool's own stderr goes to the log and never into the database; and
-the spec sets `needs_cache` rather than naming a volume, so a scanner never
-reads deployment configuration.
+That's why the rule here is strict: a tool that failed to run is always
+`errored`, never `passed`. A question that genuinely doesn't apply (no
+lockfile, say) is `skipped`, with a reason attached. The tool's raw error
+output goes to the logs, never into the stored results.
 
-### Adding a scanner
+### Adding a whole new scanner (a new category)
 
 Three steps:
 
-1. Create `backend/app/scanners/<category>/scanner.py` with a class exposing
-   `category: str`, `CHECKS: tuple[CheckSpec, ...]`, and
-   `scan(repo: RepositoryIndex) -> list[CheckResult]`
+1. Create `backend/app/scanners/<category>/scanner.py` — a class with a
+   `category` name, a list of `CHECKS`, and a `scan()` method that returns
+   results
 2. Register it in `backend/app/scanners/registry.py`
-3. Add `backend/tests/test_<category>_scanner.py`
+3. Add a test file: `backend/tests/test_<category>_scanner.py`
 
-Each check returns its own outcome, so "verified and fine" stays distinct from
-"did not apply":
+Every check returns its own explicit outcome, so "we checked this and it
+was fine" stays distinct from "this didn't apply here":
 
 ```python
 def _check_health(self, repo: RepositoryIndex, has_health: bool) -> CheckResult:
@@ -445,49 +450,65 @@ def _check_health(self, repo: RepositoryIndex, has_health: bool) -> CheckResult:
     return failed(_HEALTH, ScanFinding(...))
 ```
 
-Scanners are **synchronous** and receive a pre-built `RepositoryIndex` — the
-tree is walked once per scan, not once per scanner. The worker dispatches them
-off the event loop and pulls findings out with `findings_of()`, which is what
-keeps scoring identical to before check outcomes existed.
+Scanners themselves are plain, ordinary (synchronous) functions — the repo
+gets read into memory once, then every scanner works off that same copy
+instead of each one re-reading the filesystem.
 
-A check backed by a tool lives in `scanners/security/tools/`, runs through
-`utils/sandbox.py`, and reports `errored` whenever the tool could not run —
-never `passed`. That distinction is not academic: an early version read
-Gitleaks' "I could not read this directory" exit code as its "no leaks found"
-exit code, and reported a repository full of credentials as clean. The tool now
-runs with `--exit-code 0`, so a non-zero exit means one thing only.
+A few conventions worth knowing: each category's point values must add up
+exactly to its weight; report one finding per underlying problem, not one
+per affected file; and every declared check must return *some* result for
+every scan — there's a shared test that checks this across several sample
+repos, so a check you forget to actually run fails the test suite instead
+of silently pretending to pass.
 
-Conventions: impacts sum to exactly the category weight; one finding per
-*problem* rather than per file; read `production_files`; guard service-only
-checks with `repo.is_service`; and return a result for **every** declared
-check — a shared test asserts it against several repositories, so a check you
-forget to run fails the suite rather than silently reporting as passed.
+### Why the security tools run at the same time, and why there's a cap
 
-The three tool-backed checks run **concurrently**, so the security category
-costs the slowest container rather than the sum of three. They are dispatched
-through a `ThreadPoolExecutor` inside the scanner, which keeps the `Scanner`
-protocol synchronous — a subprocess wait releases the GIL, so threads are the
-right tool and the worker still dispatches a scanner with one `to_thread`.
+The three tool-backed security checks (Gitleaks, Trivy, Semgrep) run
+concurrently rather than one after another, so the whole category takes as
+long as the *slowest* one, not the sum of all three.
 
-Concurrency has a ceiling, and it is deliberate. `--memory` bounds what one
-container may use; nothing bounds how many exist, and the real count is arq's
-`max_jobs` multiplied by the tools a scanner runs at once — five scans of three
-tools is fifteen containers, which at 512 MB apiece is 7.5 GB and more than a
-default Docker Desktop VM has. `SANDBOX_MAX_CONCURRENT` bounds the containers
-directly, so adding a fourth tool changes queueing rather than the memory
-ceiling.
+That concurrency has a deliberate limit
+(`SANDBOX_MAX_CONCURRENT`, default 6). Each sandboxed container has its own
+memory cap, but nothing stops many containers existing at once — several
+scans running at the same time, each spinning up three tool containers,
+adds up fast enough to exhaust a normal machine's memory. The limit was set
+by actually measuring real memory use (Semgrep ~270MB, Gitleaks ~60MB,
+Trivy ~40MB at peak) rather than guessing, and extra scans simply queue
+briefly instead of being allowed to pile up unbounded.
 
-Its value came from measuring rather than from halving the alarming number.
-Peak usage is Semgrep 271 MiB, Gitleaks 58 MiB, Trivy 39 MiB — a fraction of
-what the limits allow, and a limit is not a reservation. Six is two scans' worth
-of tools, and the queueing it causes is cheap: on a 2,531-file repository the
-three tools cost about 34 container-seconds together, so waits are tens of
-seconds against a 300s ceiling. Waiting is still *bounded*, because waiting
-indefinitely would push a scan past `job_timeout`, get it cancelled mid-write
-and retried — adding load exactly when there is already too much.
+Measured effect on this repository: the security category went from
+**33.5s to 22.9s** once all three tools ran together instead of one after
+another.
 
-Measured on that repository, the security category went from **33.5s to 22.9s**,
-which is the sum of three tools becoming the slowest of them.
+### The CI/CD pipeline
+
+Two separate GitHub Actions workflows, doing two different jobs:
+
+**`ci.yml` — runs on every push and pull request.** Four stages, each
+gated on the one before it passing:
+
+| Stage | What it does |
+|---|---|
+| Backend tests | Runs the full pytest suite (948 tests) against a real Postgres, plus linting and formatting checks |
+| Frontend tests | Type-checking, linting, unit tests, and a production build |
+| Image build | Actually builds the API and worker Docker images, then starts each one to check it doesn't crash on launch (a missing dependency can build fine and still fail the moment it runs) |
+| Publish to GHCR | Only runs when a version tag (`v1.2.3`) is pushed, and only after all three stages above have passed — pushes the built images to GitHub's container registry, tagged with the version and commit |
+
+That last stage existing only for tagged releases — not every push — means
+the registry only ever holds an image that's actually passed everything.
+
+**`deploy.yml` — runs on every push to `main`, and deploys for real.** This
+one logs into the live AWS server and does the actual release: pulls the
+new code, rebuilds the containers there directly from source (it doesn't
+use the GHCR images above at all — see the note in the deploy folder's own
+README for why), and swaps each service over one at a time, only moving to
+the next once the previous one reports healthy. If a final health check
+fails at the end, it automatically rolls back to the last known-good
+version rather than leaving the site broken.
+
+The monitoring stack (Prometheus/Grafana/Loki) is deliberately **not**
+part of either pipeline — it's set up once by hand and left running,
+the same way the database is, rather than being restarted on every deploy.
 
 ---
 
@@ -615,71 +636,81 @@ than mandatory.
 
 ## Roadmap
 
-- [x] **Foundation** — auth, database, API, Docker
-- [x] **Scanning engine** — all 6 scanners, plus private repositories
-- [x] **Explainability** — commit context on each scan, real reasons when one
-      fails, which checks passed rather than only what broke, scan-to-scan
-      comparison, and editing that preserves history
-- [x] **Security tooling** — real tools instead of regexes, each in its own
-      sandbox behind a `SandboxRunner` boundary. Gitleaks, Trivy and Semgrep,
-      run concurrently under a bounded container limit, so the category costs
-      the slowest tool rather than the sum of them. OSV was dropped as a
-      duplicate of Trivy
-- [x] **Reporting** — PDF export, rendered on demand behind a `ReportRenderer`
-      boundary and cached in object storage under a key that fingerprints what
-      the document says, so renaming a scan produces a fresh document rather
-      than a stale one
-- [x] **Portable deployment** — `deploy/compose/`, a Docker Compose stack that
-      runs on any Linux VM on any cloud's free trial: Caddy for TLS and the
-      single-origin proxy, `S3Storage` for object storage against real S3, R2,
-      Spaces or MinIO, and the same `DockerSandbox` development already uses.
-      Verified end to end, sandbox included, self-scan included
-- [ ] **Managed cloud deployment** — the Terraform under `deploy/*.tf` was
-      applied once, to GCP; its billing account has since lapsed and the
-      project sits frozen (`11-phase5-handoff.md`). Load testing and
-      observability were never reached
+- [x] **Foundation** — accounts, database, the API, and the whole app running
+      in Docker
+- [x] **Scanning engine** — all 6 scoring categories working, plus support
+      for private (not just public) repositories
+- [x] **Explainability** — every scan shows which commit it looked at, real
+      reasons when a scan fails instead of a bare error, what actually
+      passed rather than just what broke, and scan-to-scan comparison
+- [x] **Real security tooling** — swapped simple pattern-matching for actual
+      tools (Gitleaks, Trivy, Semgrep), each running sandboxed and
+      concurrently so they don't add up in total time
+- [x] **PDF reports** — every scan can be exported as a document, generated
+      on demand and cached so re-downloading the same scan is instant
+- [x] **Portable deployment** — a Docker Compose setup (`deploy/compose/`)
+      that runs the whole app on any plain Linux server on any cloud, not
+      tied to one provider
+- [x] **Live production deployment** — actually running on a real AWS
+      server (`deploy/aws/`), reachable over the internet with a real
+      domain and HTTPS
+- [x] **Full observability** — Prometheus, Grafana, and Loki running
+      alongside the live app: real-time dashboards for traffic, the scan
+      queue, container health, and searchable live logs
+- [ ] **Load testing** — not yet done; how the app behaves under heavy
+      concurrent scan traffic is still unverified
 
-Private repositories use a GitHub App rather than stored access tokens, so
-credentials expire hourly and are never persisted.
+Private repositories are accessed through a GitHub App rather than stored
+personal access tokens, so credentials expire automatically and nothing
+long-lived is ever saved.
 
-Several of the findings SentinelOps has reported about itself over time were
-its own missing CI, an unpatched dependency, an oversized file, and its own
-missing metrics. **CI is now in
-[.github/workflows/ci.yml](.github/workflows/ci.yml)** — added because the tool
-kept saying so, which is the only honest way to ship something that grades other
-people's repositories. The dependency was upgraded and the file was split; both
-findings are gone from the scan shown at the top of this page. Metrics remain
-deferred and are the largest deduction left — real feature work, not a fix
-that fits alongside everything else, and on the roadmap below rather than
-rushed. The Docker socket mount is the other finding still standing, and it is
-meant to: see the note above the score.
-
-The pipeline runs three independent jobs: backend lint, format and the full
-suite against a real PostgreSQL service; frontend lint, types, tests and build;
-and both container images built and then *started*, because a missing runtime
-dependency is invisible to `docker build` and fatal on first run — which is
-exactly how this project once shipped two images that crashed on import.
-
-On a `v*` tag, and only once all three have passed, a fourth job publishes the
-API and worker images to GHCR. They carry the version and the full commit SHA
-and deliberately no `latest`: a moving tag makes "which image is running" a
-question nobody can answer afterwards, and it is how a rollback quietly
-redeploys the thing it was rolling back from.
+SentinelOps has been used to scan itself along the way, and it's caught real
+things worth admitting to: it once flagged its own missing CI setup (now
+fixed — see [.github/workflows/ci.yml](.github/workflows/ci.yml)), an
+outdated dependency (upgraded), and an oversized file (split up). The one
+finding still standing on purpose is the Docker socket mount described near
+the top of this page — that one's a deliberate trade-off, not an oversight.
 
 ## Stack
 
-**Frontend** — React, TypeScript, Vite, Tailwind, shadcn/ui, TanStack Query,
-Recharts, Vitest
+Everything actually used, and a plain reason for each:
 
-**Backend** — FastAPI, Pydantic, SQLAlchemy 2.0 (async), Alembic, PostgreSQL,
-Redis + arq, bcrypt, PyJWT, slowapi, pytest
+**Frontend**
 
-**Infrastructure** — Docker Compose, multi-stage images with separate API and
-worker targets
+| Tool | Why this one |
+|---|---|
+| React + TypeScript | Standard, typed, huge ecosystem — no exotic choice here |
+| Vite | Fast dev server and build, minimal config compared to older bundlers |
+| Tailwind + shadcn/ui | Utility CSS plus accessible, unstyled component primitives — fast to build with, doesn't fight you |
+| TanStack Query | Handles server data fetching/caching/polling (used for live scan progress) without hand-rolling it |
+| Recharts | The category score bars and comparison charts |
+| Vitest | Fast, works natively with Vite's config, no separate test bundler needed |
 
-Two dependency choices worth knowing: `bcrypt` directly rather than passlib
-(unmaintained, breaks against bcrypt 4.x) and PyJWT rather than python-jose
-(unmaintained, signature-verification CVEs).
+**Backend**
+
+| Tool | Why this one |
+|---|---|
+| FastAPI | Async-native, automatic request validation and OpenAPI docs from the same type hints |
+| Pydantic | Backs FastAPI's validation, also used for settings/config loading |
+| SQLAlchemy 2.0 (async) | The database layer, using its modern async API to match FastAPI |
+| Alembic | Generates and runs database schema migrations |
+| PostgreSQL | The real database — chosen over SQLite specifically because the schema leans on features (JSONB, native enums, cascading deletes) SQLite can't faithfully reproduce |
+| Redis + arq | The job queue — scans are queued here and picked up by the background worker, so the API never blocks waiting for a scan to finish |
+| bcrypt | Password hashing — used directly instead of the popular `passlib` wrapper, which is unmaintained and breaks on newer bcrypt versions |
+| PyJWT | Session tokens — chosen over `python-jose`, which is unmaintained and has had signature-verification vulnerabilities |
+| slowapi | Rate limiting on auth endpoints, to slow down brute-force login attempts |
+| pytest | The whole backend test suite, ~948 tests |
+
+**Infrastructure & ops**
+
+| Tool | Why this one |
+|---|---|
+| Docker Compose | Runs the whole stack (database, queue, API, worker, frontend) consistently in dev and in production |
+| Caddy | The production reverse proxy — handles HTTPS certificates automatically, no manual cert setup |
+| Prometheus | Collects numeric metrics (request rates, latency, queue depth) from the running app |
+| Grafana | Turns those metrics (and logs) into dashboards |
+| Loki + Grafana Alloy | Log collection and search — Alloy ships every container's logs to Loki as they're printed |
+| GitHub Actions | CI (tests/build on every push) and CD (actual deployment to the live server) — see below |
 
 ## License
 
