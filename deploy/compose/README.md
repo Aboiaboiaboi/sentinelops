@@ -141,3 +141,51 @@ whole path exists to keep true.
 everything including the named volumes — the database, the sandbox caches, and
 Caddy's certificate. The object storage bucket is not touched; delete it
 separately if you're done with it.
+
+## Observability
+
+`docker-compose.observability.yml` — Prometheus, Grafana, Loki, Grafana
+Alloy (log shipping), node-exporter, and cAdvisor. `provision.sh` starts it
+alongside the app stack automatically; nothing here is optional-by-omission
+the way `SANDBOX_MAX_CONCURRENT` is, except `GRAFANA_ADMIN_PASSWORD`, which
+`provision.sh` generates the same way it generates `SECRET_KEY`.
+
+**Static infra, not part of the release cadence.** Started once, left
+running — `deploy.sh` and `rollback.sh` never touch it, the same treatment
+Postgres and Redis already get. A dashboard/scrape-config change is a manual
+`docker compose -f docker-compose.prod.yml -f docker-compose.observability.yml
+up -d --force-recreate <service>` on the instance, not something a code push
+triggers.
+
+**Reaching it:**
+
+| | |
+|---|---|
+| Grafana | `https://<your domain>/grafana` — public, proxied through Caddy; sign in as `admin` with `GRAFANA_ADMIN_PASSWORD` from `.env` |
+| Prometheus | `http://localhost:9090` via SSH tunnel only — `ssh -L 9090:localhost:9090 <host>` |
+| Loki | `http://localhost:3100` via SSH tunnel only — `ssh -L 3100:localhost:3100 <host>` |
+
+Prometheus and Loki are loopback-bound on the instance (`127.0.0.1:9090`,
+`127.0.0.1:3100` in the compose file) — neither has authentication of its
+own, so neither is reachable from outside the VM by any route, tunnel
+aside. Grafana is the only one meant to be public; its own login is the
+actual boundary.
+
+**Four dashboards**, provisioned as code under
+`observability/grafana/dashboards/*.json` (edit and commit, not click-and-forget
+in the UI): API request rate/latency/error-rate, scan queue depth and job
+outcomes, per-container + host resource usage, and live log search filtered
+by service.
+
+**Retention:** 14 days for both Prometheus and Loki (`--storage.tsdb.retention.time`
+in the compose file; `retention_period` in `observability/loki/loki-config.yml`) —
+long enough to show a real trend, bounded on disk. `deploy/aws/variables.tf`'s
+`root_volume_size_gb` is sized with this assumed.
+
+**Known local-dev-only gap:** cAdvisor's per-container CPU/memory panels
+show no data under Docker Desktop (Windows/Mac) — its virtualized VM layer
+can't read the real host's Docker overlayfs layer metadata the way a native
+Linux Docker install can (`failed to identify the read-write layer ID`, in
+`docker logs cadvisor`). Host-level metrics (node-exporter) and everything
+else work identically in both places; this is specifically a Docker Desktop
+limitation, verified working on the actual Linux VM in `deploy/aws/`.

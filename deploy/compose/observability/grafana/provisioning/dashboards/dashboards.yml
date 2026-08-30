@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: SentinelOps
+    folder: SentinelOps
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      # Mounted read-only from ../dashboards in
+      # docker-compose.observability.yml. Any JSON file dropped there is
+      # picked up automatically on the next interval — dashboards are code,
+      # not something clicked together and left unversioned.
+      path: /var/lib/grafana/dashboards

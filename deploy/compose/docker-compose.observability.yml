@@ -1,0 +1,149 @@
+# Permanent, self-hosted observability: metrics (Prometheus), dashboards
+# (Grafana), and log search (Loki + Grafana Alloy). Kept as a second compose file
+# rather than merged into docker-compose.prod.yml deliberately — this is
+# static infra, provisioned once by provision.sh and left running, never
+# rolled by deploy.sh/rollback.sh the way backend/worker/frontend are (see
+# deploy/compose/README.md's observability section for why).
+#
+# Invoked alongside the prod file, from this same directory:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.observability.yml \
+#     --env-file .env up -d
+#
+# Same default Compose network as the app stack (no explicit `networks:`
+# block here, same as docker-compose.prod.yml) — every service below reaches
+# `backend`, `redis` etc. by name, and the app stack's containers reach
+# `prometheus`/`loki` by name for the reverse-proxy and Grafana's
+# datasources.
+
+services:
+  # Scrapes the backend's own /metrics (backend/app/observability.py),
+  # node-exporter (host CPU/mem/disk) and cAdvisor (per-container resource
+  # use). Bound to 127.0.0.1 only — Prometheus has no auth of its own, so it
+  # is reachable from other containers on this network (Grafana's
+  # datasource) and, from outside the VM, only via an SSH tunnel:
+  #   ssh -L 9090:localhost:9090 <host>
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # 14 days: long enough to show a real trend, short enough to bound
+      # disk on a single VM. Matches Loki's retention below and
+      # root_volume_size_gb's sizing math (deploy/aws/variables.tf).
+      - "--storage.tsdb.retention.time=14d"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  # Host-level CPU/memory/disk metrics. Deliberately NOT network_mode: host —
+  # that would take it off this Compose network entirely and break
+  # service-name scraping from Prometheus. The read-only /proc, /sys, / mounts
+  # below already give it everything it needs without host networking.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/host/root"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+
+  # Per-container CPU/memory/network, one series per container — what the
+  # "Container resources" dashboard reads. privileged: true is required for
+  # cgroup access; no published port, reached only by Prometheus over this
+  # network.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+
+  # Log storage and search. Same loopback-only exposure as Prometheus, same
+  # reason (no auth of its own):
+  #   ssh -L 3100:localhost:3100 <host>
+  loki:
+    image: grafana/loki:3.3.0
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+
+  # Ships every container's stdout/stderr to Loki via Docker service
+  # discovery — present and future containers in either compose file, no
+  # per-service config needed. Grafana's current log shipper — Promtail
+  # (the original pick here) is Grafana's own deprecated predecessor,
+  # end-of-life with no further updates. Read-only mount of the Docker
+  # socket: needed only to discover which containers exist and read their
+  # logs/metadata (image, compose service label), never to control them.
+  alloy:
+    image: grafana/alloy:v1.19.2
+    restart: unless-stopped
+    command:
+      - "run"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+      - "--storage.path=/var/lib/alloy/data"
+      - "/etc/alloy/config.alloy"
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+
+  # The dashboards. Public, unlike Prometheus/Loki — proxied through Caddy at
+  # /grafana/* (frontend/Caddyfile) on the domain's existing TLS listener.
+  # Grafana's own login is the auth boundary; no published port here, reached
+  # only via that proxy.
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?generate one — see .env.example}
+      # Both required together for Grafana to work correctly reverse-proxied
+      # under a path prefix rather than at its own domain root — otherwise
+      # its own asset and API links resolve wrong under /grafana.
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SERVER_ROOT_URL: https://${DOMAIN:?set your domain in .env}/grafana
+      # Disabled: this instance has no outbound need for it, and it is one
+      # fewer thing phoning home from a box that already minimizes what it
+      # exposes.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+
+volumes:
+  # Named explicitly and namespaced with _prod_, same convention
+  # docker-compose.prod.yml already uses for worker_data/sandbox_cache — so
+  # this file and the dev docker-compose.yml never collide on the same
+  # Docker daemon, and `docker run`-from-inside-a-container name lookups (not
+  # relevant here, but consistency matters) stay predictable.
+  prometheus_data:
+    name: sentinelops_prod_prometheus_data
+  loki_data:
+    name: sentinelops_prod_loki_data
+  grafana_data:
+    name: sentinelops_prod_grafana_data
+  # Alloy's own WAL/positions state — small, but losing it on a container
+  # recreate would re-read container logs from the start rather than resume.
+  alloy_data:
+    name: sentinelops_prod_alloy_data

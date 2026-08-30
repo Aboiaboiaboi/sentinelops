@@ -1,0 +1,40 @@
+# Single-binary, filesystem-backed — right-sized for one VM's log volume.
+# Loki's own object-storage backends (S3, GCS) exist for a multi-node
+# deployment this project does not have.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# 14 days, matching Prometheus's --storage.tsdb.retention.time in
+# docker-compose.observability.yml — long enough for a real trend, bounded
+# on a single VM's disk (deploy/aws/variables.tf's root_volume_size_gb sizing
+# assumes this number).
+limits_config:
+  retention_period: 336h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem

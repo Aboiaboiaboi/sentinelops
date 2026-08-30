@@ -30,6 +30,24 @@
 		}
 	}
 
+	# Grafana dashboards (deploy/compose/docker-compose.observability.yml).
+	# Public on purpose — reuses this same TLS listener/certificate, and
+	# Grafana's own login is the actual auth boundary, generated the same way
+	# SECRET_KEY is (provision.sh). Prometheus and Loki, which have no login
+	# of their own, are deliberately NOT proxied here — see
+	# docker-compose.observability.yml's comments on both.
+	#
+	# Plain `handle`, not `handle_path`: unlike /api/* below, Grafana is
+	# configured with GF_SERVER_SERVE_FROM_SUB_PATH=true and already expects
+	# to see the /grafana prefix itself — stripping it here would have Caddy
+	# forward /login while Grafana is only listening for /grafana/login.
+	handle /grafana/* {
+		reverse_proxy grafana:3000 {
+			lb_try_duration 15s
+			lb_try_interval 250ms
+		}
+	}
+
 	# Everything else is the built SPA. try_files falls back to index.html for
 	# any path that is not a real static asset, which is what a client-side
 	# router (react-router-dom) needs — a deep link like /projects/abc must

@@ -36,7 +36,7 @@ variable "instance_type" {
 variable "root_volume_size_gb" {
   description = <<-EOT
     EBS root volume size. 30 GB: the OS, eight Docker images (five app +
-    Prometheus/Loki/Grafana/node-exporter/cAdvisor/Promtail), the
+    Prometheus/Loki/Grafana/node-exporter/cAdvisor/Alloy), the
     Trivy/Semgrep cache (~1.1 GB), and 14 days of retained Prometheus +
     Loki data (~1.5 GB combined) — with headroom.
   EOT

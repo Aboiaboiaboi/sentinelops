@@ -1,0 +1,50 @@
+// Ships every Docker container's stdout/stderr to Loki. Grafana's current
+// log-shipping agent — Promtail, the original pick here, is Grafana's own
+// deprecated predecessor and no longer receives updates.
+//
+// Three components, each doing one job, wired together by name (Alloy's
+// config is a graph of components, not a linear pipeline):
+//   discovery.docker    -> finds every running container via the socket
+//   discovery.relabel   -> extracts the two labels the logs dashboard needs
+//   loki.source.docker  -> reads each container's log stream, applying
+//                          those labels
+//   loki.write          -> pushes the labelled entries to Loki
+
+discovery.docker "containers" {
+	host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	// Docker's own container name comes prefixed with "/" (an API quirk
+	// going back to when a container could have multiple names) — stripped
+	// here for a clean label.
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+
+	// The Compose service label — what the logs dashboard's dropdown
+	// filters on ($service in logs.json), stable across a container
+	// recreate the way a container name isn't once Compose suffixes it
+	// with a new index.
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
+}
+
+loki.source.docker "containers" {
+	host             = "unix:///var/run/docker.sock"
+	targets          = discovery.docker.containers.targets
+	relabel_rules    = discovery.relabel.containers.rules
+	forward_to       = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}

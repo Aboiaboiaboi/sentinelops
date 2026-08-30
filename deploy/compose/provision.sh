@@ -52,11 +52,13 @@ if [ ! -f .env ]; then
     # for them to forget.
     SECRET_KEY="$(openssl rand -base64 48)"
     POSTGRES_PASSWORD="$(openssl rand -base64 24)"
+    GRAFANA_ADMIN_PASSWORD="$(openssl rand -base64 24)"
     # `#` is not in either alphabet, so this delimiter cannot collide with the
     # generated value the way `/` in a base64 string would with the usual `s/.../.../`.
     sed -i "s#^SECRET_KEY=.*#SECRET_KEY=${SECRET_KEY}#" .env
     sed -i "s#^POSTGRES_PASSWORD=.*#POSTGRES_PASSWORD=${POSTGRES_PASSWORD}#" .env
-    echo "Generated .env with a fresh SECRET_KEY and POSTGRES_PASSWORD."
+    sed -i "s#^GRAFANA_ADMIN_PASSWORD=.*#GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}#" .env
+    echo "Generated .env with a fresh SECRET_KEY, POSTGRES_PASSWORD, and GRAFANA_ADMIN_PASSWORD."
 else
     echo ".env already exists — leaving it alone."
 fi
@@ -97,10 +99,22 @@ echo "==> Building and starting the stack"
 # how the cache is kept current after this.
 docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 
+echo "==> Starting the observability stack (Prometheus, Grafana, Loki, Alloy)"
+# No --build: every image here is pulled, not built from this repo. Static
+# infra — provisioned once here, never touched by deploy.sh/rollback.sh (see
+# deploy/compose/README.md's observability section for why).
+docker compose -f docker-compose.prod.yml -f docker-compose.observability.yml --env-file .env up -d
+
 echo ""
 echo "==> Done. https://$(grep '^DOMAIN=' .env | cut -d= -f2-) should now be live"
 echo "    once DNS and the certificate have both settled — check with:"
 echo "      docker compose -f docker-compose.prod.yml logs -f frontend"
+echo ""
+echo "Grafana is at https://\$(grep '^DOMAIN=' .env | cut -d= -f2-)/grafana —"
+echo "sign in as admin with the GRAFANA_ADMIN_PASSWORD generated above (or"
+echo "already in .env). Prometheus and Loki have no login of their own and"
+echo "are not exposed publicly — reach them via an SSH tunnel if needed:"
+echo "  ssh -L 9090:localhost:9090 -L 3100:localhost:3100 <this host>"
 echo ""
 echo "Trivy's database and Semgrep's rules do not refresh themselves after"
 echo "this. Keep them current with a weekly cron entry:"
