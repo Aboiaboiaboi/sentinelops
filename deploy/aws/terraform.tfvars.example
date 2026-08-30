@@ -2,8 +2,13 @@
 # your account's bucket and your IP, and terraform.tfvars is gitignored for
 # exactly that reason.
 
-region        = "us-east-1"
-instance_type = "t3.small"
+# Both have working defaults in variables.tf (ap-south-1, c7i-flex.large) —
+# only override here if a different region/size makes sense for you. See
+# variables.tf's instance_type description for why c7i-flex.large, not
+# t3.medium: some AWS accounts restrict RunInstances to a Free Tier-eligible
+# list, which does not include t3.medium.
+# region        = "ap-south-1"
+# instance_type = "c7i-flex.large"
 
 # Your current public IP, /32. Find it with: curl https://checkip.amazonaws.com
 ssh_allowed_cidr = "203.0.113.1/32"

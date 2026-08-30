@@ -2,26 +2,46 @@
 # `deploy/variables.tf` sets for the GCP configuration.
 
 variable "region" {
-  description = "AWS region. us-east-1 has the widest service availability and is usually cheapest."
+  description = <<-EOT
+    ap-south-1 (Mumbai) — the closest mature AWS region to Lahore (~1,600km),
+    with full service parity and comparable pricing to us-east-1. Moved from
+    us-east-1 once the deployment's actual user location made the latency
+    difference worth the one-time migration (new IP, new sslip.io domain,
+    GitHub App URLs, DEPLOY_DOMAIN — see deploy/aws/README.md).
+  EOT
   type        = string
-  default     = "us-east-1"
+  default     = "ap-south-1"
 }
 
 variable "instance_type" {
   description = <<-EOT
-    t3.small (2 GB RAM), not the free-tier t3.micro (1 GB). Chosen with room
-    to run the observability stack (Prometheus, Grafana, Loki, Tempo)
-    alongside the app later without a resize — see 11-phase5-handoff.md's
-    successor document on the metrics phase. ~$15/month.
+    c7i-flex.large (4 GB RAM), not t3.medium — t3.medium is blocked on this
+    account by an AWS Free Tier usage restriction (RunInstances returns
+    InvalidParameterCombination for anything outside the account's
+    free-tier-eligible list: t3.micro/small, t4g.micro/small, c7i-flex.large,
+    m7i-flex.large). c7i-flex.large matches t3.medium's 4GB and was the
+    cheaper of the two allowed options with more RAM than t3.small
+    (m7i-flex.large has 8GB but costs more). Resized up from t3.small once
+    the observability stack (Prometheus, Grafana, Loki, node-exporter,
+    cAdvisor, Promtail) was actually added — see
+    deploy/compose/docker-compose.observability.yml. t3.small fit tightly
+    (~1.35GB steady state of 2GB); this leaves genuine headroom for a scan
+    burst during a live demo. ~$62/month if run 24/7 — far less in practice,
+    since the instance is stopped between sessions.
   EOT
   type        = string
-  default     = "t3.small"
+  default     = "c7i-flex.large"
 }
 
 variable "root_volume_size_gb" {
-  description = "EBS root volume size. 20 GB covers the OS, five Docker images and the Trivy/Semgrep cache volume (~1.1 GB) with headroom."
+  description = <<-EOT
+    EBS root volume size. 30 GB: the OS, eight Docker images (five app +
+    Prometheus/Loki/Grafana/node-exporter/cAdvisor/Promtail), the
+    Trivy/Semgrep cache (~1.1 GB), and 14 days of retained Prometheus +
+    Loki data (~1.5 GB combined) — with headroom.
+  EOT
   type        = number
-  default     = 20
+  default     = 30
 }
 
 variable "ssh_allowed_cidr" {

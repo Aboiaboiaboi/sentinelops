@@ -28,3 +28,16 @@ terraform {
 provider "aws" {
   region = var.region
 }
+
+# The reports bucket (storage.tf) is pinned here regardless of var.region.
+# S3 bucket names are globally unique across every region and account, and
+# the bucket already exists in us-east-1 — switching the default provider's
+# region (done for the compute side, deploy/aws/README.md's region-migration
+# note) would otherwise make Terraform believe the bucket needs creating
+# fresh in the new region, which either fails outright (name taken) or, worse,
+# succeeds in a confusing state. Moving real data to a new bucket in a new
+# region is a deliberate migration this alias does not attempt.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+}

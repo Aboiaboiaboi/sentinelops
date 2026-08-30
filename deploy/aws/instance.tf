@@ -26,12 +26,14 @@ resource "aws_instance" "app" {
   # check exists to catch exactly the floating-reference version of this
   # mistake, and a `terraform plan` that wants to replace the instance every
   # time Canonical publishes a new build would be that mistake with extra
-  # steps. Ubuntu 24.04 LTS, amd64, us-east-1, resolved once via:
-  #   aws ssm get-parameter --name \
+  # steps. Ubuntu 24.04 LTS, amd64, ap-south-1 (AMI ids are region-specific
+  # even for the identical image — this changed when the region did),
+  # resolved once via:
+  #   aws ssm get-parameter --region ap-south-1 --name \
   #     /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
   # Bump deliberately, the same way deploy/terraform.tfvars documents mirroring
   # a new image digest from GHCR.
-  ami           = "ami-0d7f022123f8ff19d"
+  ami           = "ami-050c78efa486a0196"
   instance_type = var.instance_type
 
   subnet_id              = data.aws_subnet.app.id

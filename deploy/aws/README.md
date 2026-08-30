@@ -16,39 +16,56 @@ simplifications is fine at this size and what would make them not fine.
 
 ## What's running right now
 
-**Currently stopped, deliberately** — the instance is stopped between working
-sessions rather than left running (and billing) with nobody using it. First
-deployed 2026-08-29 at commit `ccd24a2`, self-scan **94/100, Grade A**,
-verified end to end: signup, a real scan, the sandbox, and a PDF report that
-round-trips through the actual S3 bucket below, not a stand-in.
+**Currently running.** Migrated from `us-east-1` to `ap-south-1` (Mumbai) on
+2026-08-30 — the deployment's actual user is in Lahore, and `ap-south-1` is
+the closest mature AWS region, at comparable pricing. The migration was a
+full instance replacement (AWS regions share nothing — new VPC, new IP, new
+domain); the old `us-east-1` instance, EIP, security group and key pair were
+all torn down, confirmed via a full audit (`describe-addresses`,
+`describe-instances`, `describe-key-pairs`, `describe-security-groups`) —
+nothing left billing there. Verified end to end after the move: site health,
+sign-in, and a real private-repository scan against the new domain.
 
 | | |
 |---|---|
-| Instance | `i-09ef906ff63661005`, t3.small, us-east-1a |
-| Storage bucket | `sentinelops-reports-473183365846` |
-| SSH | `ssh -i ~/.ssh/sentinelops-deploy.pem ubuntu@<address>` — see below for what `<address>` is |
+| Instance | `i-055e58990061bfd1e`, `c7i-flex.large` (4 GB RAM), `ap-south-1a` |
+| Storage bucket | `sentinelops-reports-473183365846` — **stays in `us-east-1`** (see below), pinned via the `aws.us_east_1` provider alias in `versions.tf` regardless of `var.region` |
+| Fixed address | `13.206.43.42` / `13-206-43-42.sslip.io` (`aws_eip.app`) |
+| SSH | `ssh -i ~/.ssh/sentinelops-deploy.pem ubuntu@13.206.43.42` |
 
-**A fixed address (`aws_eip.app`, in `instance.tf`) is configured but not yet
-applied.** Until `terraform apply` runs, the instance's public IP is
-ephemeral and changes on every stop/start — which the first deployment
-learned the hard way, since it silently breaks the sslip.io domain below,
-`DEPLOY_DOMAIN` in GitHub Actions, and any GitHub App callback pointing at
-the instance, all three at once. Applying is one command:
+**Instance type is `c7i-flex.large`, not `t3.medium`.** `t3.medium` is
+blocked on this account by an AWS Free Tier usage restriction —
+`RunInstances` returns `InvalidParameterCombination` for anything outside
+the account's free-tier-eligible list (`t3.micro`/`small`,
+`t4g.micro`/`small`, `c7i-flex.large`, `m7i-flex.large`). `c7i-flex.large`
+matches `t3.medium`'s 4GB RAM and was the cheaper of the two allowed
+options with more RAM than `t3.small` — see `variables.tf`'s
+`instance_type` description for the full pricing comparison. Revisit if
+AWS ever lifts the restriction on this account (a support case, not
+something `terraform apply` can fix).
 
-```bash
-cd deploy/aws
-terraform apply
-```
+**The S3 bucket deliberately did not move with the compute.** S3 bucket
+names are globally unique across every region and account — moving it would
+have meant creating a *new* bucket and migrating real report data, not a
+config change. It stays in `us-east-1`; the instance reads/writes it over
+the network like any S3-compatible client would, at a small, one-time-per-request
+latency cost that doesn't matter for this workload. `storage.tf`'s three S3
+resources are pinned to the `aws.us_east_1` provider alias for exactly this
+reason — without it, changing `var.region` would make Terraform try to
+recreate the bucket in the new region on every apply.
 
-**After that (or whenever the address changes for any other reason),** the
-domain the app lives at is `terraform output -raw sslip_domain`, which
-resolves through [sslip.io](https://sslip.io) — a free wildcard DNS service
-with no signup: `<ip-with-dashes>.sslip.io` resolves to that literal IP, and
-because it's a real, publicly resolvable domain, Caddy gets a genuine Let's
-Encrypt certificate for it rather than a self-signed one. If a real domain is
-ever pointed here instead, update `DOMAIN` in `deploy/compose/.env` on the
-instance and restart the `frontend` container — Caddy requests a fresh
-certificate for whatever it's given.
+**A fixed address (`aws_eip.app`) is applied and stable** — the domain the
+app lives at is `terraform output -raw sslip_domain`, resolving through
+[sslip.io](https://sslip.io) — a free wildcard DNS service with no signup:
+`<ip-with-dashes>.sslip.io` resolves to that literal IP, and because it's a
+real, publicly resolvable domain, Caddy gets a genuine Let's Encrypt
+certificate for it rather than a self-signed one. If the address ever
+changes again (region move, EIP replacement), update in order: `DOMAIN` in
+`deploy/compose/.env` on the instance (restart `frontend` — Caddy requests a
+fresh certificate for whatever it's given), the `DEPLOY_DOMAIN` GitHub
+Actions variable, and the production GitHub App's Homepage/Setup URLs — see
+"Two ways in" and the main handoff document for the full checklist a region
+move needs.
 
 ## Running it
 
@@ -139,15 +156,15 @@ changing home IP, and is what CI effectively also relies on the shape of
 
 ```bash
 # One-off commands, no session plugin needed:
-aws ssm send-command --instance-ids i-09ef906ff63661005 --region us-east-1 \
+aws ssm send-command --instance-ids i-055e58990061bfd1e --region ap-south-1 \
   --document-name "AWS-RunShellScript" \
   --parameters 'commands=["docker compose -f ~/sentinelops/deploy/compose/docker-compose.prod.yml ps"]'
 aws ssm get-command-invocation --command-id <id-from-above> \
-  --instance-id i-09ef906ff63661005 --region us-east-1
+  --instance-id i-055e58990061bfd1e --region ap-south-1
 
 # Interactive shell — needs the Session Manager plugin installed locally once:
 #   winget install -e --id Amazon.SessionManagerPlugin
-aws ssm start-session --target i-09ef906ff63661005 --region us-east-1
+aws ssm start-session --target i-055e58990061bfd1e --region ap-south-1
 ```
 
 Granted by `aws_iam_role_policy_attachment.ssm` in `iam.tf`, attaching AWS's
