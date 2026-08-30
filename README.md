@@ -11,10 +11,10 @@ it. It also shows which commit it looked at, what changed since the last
 scan, and what it *confirmed was fine*, not just what broke.
 
 [Quick start](#quick-start-5-minutes) ·
-[What it checks](#what-it-checks) ·
+[What it's for](#what-its-for) ·
 [Beyond the score](#beyond-the-score) ·
-[For developers](#for-developers) ·
-[How it works](#how-it-works)
+[How it works](#how-it-works) ·
+[For developers](#for-developers)
 
 </div>
 
@@ -299,6 +299,210 @@ since the last scan (nothing to compare it to yet).
 
 ---
 
+## How it works
+
+**Inside the app**, when you click "Run scan":
+
+```
+Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
+                            │                 ▲
+                            ▼                 │
+                       Redis queue ──► Worker ┘
+                                          │
+                                          ▼
+                  clone → index → 6 scanners → 31 checks → score
+                                        │
+                                        └─ sandboxed tools (no network)
+```
+
+The API doesn't do the scanning itself — it just saves a record and drops a
+job in a queue, so it can reply instantly no matter how big the repo is. A
+separate worker process picks that job up, does the actual clone and scan,
+and the browser just polls for a result. Each of the 6 categories runs
+independently, so if one of them breaks, the scan still finishes with the
+rest — that one category just loses its points instead of the whole scan
+failing.
+
+**Around the app**, in production:
+
+```
+Terraform (deploy/aws/)
+    │  provisions
+    ▼
+AWS EC2 instance ──► Caddy (HTTPS + reverse proxy)
+    │                      │
+    │                      ├──► the app itself (diagram above)
+    │                      └──► Grafana (dashboards, password-protected)
+    │
+    └──► Prometheus + Loki + Alloy
+             (collect metrics & logs from every container)
+```
+
+The server itself — the VM, its network rules, its storage — is created by
+Terraform, so standing up the whole environment from nothing is one command,
+not a checklist. Caddy sits in front of everything as the single public
+door: it gets the HTTPS certificate and decides what goes where. Alongside
+the app, a monitoring stack watches it — Prometheus polls the app for
+numbers (traffic, queue size), Loki collects logs, and Grafana turns both
+into dashboards.
+
+### Project layout
+
+| Path | Contents |
+|---|---|
+| `backend/app/api/` | The HTTP layer — thin, just calls into `services/` |
+| `backend/app/services/` | The actual business logic, shared by both the API and the worker |
+| `backend/app/scanners/` | Takes a repository in, returns check results out — nothing else |
+| `backend/app/scanners/security/tools/` | One file per external tool (Gitleaks/Trivy/Semgrep) |
+| `backend/app/workers/` | Queue handling and repository cloning |
+| `backend/app/utils/sandbox.py` | The only code allowed to start a container that runs on a stranger's code |
+| `backend/app/models/` `schemas/` | Database tables, and API request/response shapes — kept deliberately separate |
+| `frontend/src/api/` `hooks/` | Functions that call the backend, and the React hooks wrapping them |
+| `frontend/src/pages/` `components/` | Screens, and the reusable pieces they're built from |
+| `deploy/aws/` | Terraform — creates the actual live server this runs on |
+| `deploy/compose/` | The portable version — same app, one Docker Compose file, runs on any Linux server |
+
+A couple of boundaries worth knowing about:
+
+- **API response shapes (`schemas/`) are kept separate from database tables
+  (`models/`)** on purpose. The `User` table has a password hash column; no
+  API response type even references it, so there's no way for it to
+  accidentally leak in a response.
+- **The scanning code doesn't know about the database, the API, or the
+  cloud.** It only knows how to read a repository and return results — which
+  means every scanner can be tested against a plain folder on disk, no real
+  app running required.
+
+### Security
+
+Since this app clones and inspects other people's code, it treats every
+repository as untrusted input:
+
+- Clones are shallow (no full history), and only the code itself — no
+  submodules, no large file storage
+- Hard limits on how long a clone can take and how much it can download
+- Git hooks are disabled, so a repo can't run its own scripts during clone
+- Symbolic links are never followed, so a link pointing outside the repo
+  (like `/etc`) can't be used to read the host machine
+- Every clone is deleted after the scan, success or failure
+- The worker runs as a non-root user, and only the worker (not the API) has
+  `git` installed at all
+
+The three tool-backed security checks go further, since they're the only
+part of this system that actually **runs** other people's code (via
+Gitleaks/Trivy/Semgrep): each runs in its own locked-down container with no
+network access at all, read-only filesystem access, every extra permission
+stripped, and a memory/CPU cap. If a scan needed to trust a sandbox, it can't
+— the sandbox refuses to run rather than run unsafely.
+
+On the account side: passwords are hashed with bcrypt, the login session is
+an `httpOnly` cookie (invisible to JavaScript, so it can't be stolen via a
+script-injection bug), login takes the same amount of time whether or not
+the account exists (so it can't be used to guess valid emails), and login
+attempts are rate-limited.
+
+### How tied to one cloud is this, really
+
+Not "runs anywhere with zero changes" — that claim is usually either untrue
+or very expensive to actually achieve. What's true here is narrower and
+easier to check: only a **small, named part** of the code knows it's talking
+to a specific cloud.
+
+| Layer | What it is | Cost to move it |
+|---|---|---|
+| **Fully swappable** | Three files — `utils/queue.py`, `utils/storage.py`, `utils/sandbox.py` — are the *only* places allowed to know about a specific cloud service or SDK | Write one new file. Nothing in the API, business logic, or scanners changes at all |
+| **Already works elsewhere** | Object storage (`S3Storage`) speaks the standard S3 API, which AWS, Cloudflare R2, DigitalOcean Spaces, and MinIO all understand. The sandbox just needs a Docker daemon, which every cloud's VM has | Change a URL and a bucket name — no code |
+| **Just a connection string** | Postgres and Redis | Point at a managed version of either (RDS, Neon, Upstash, etc.) — same protocol, different address |
+| **Actually cloud-specific** | The Terraform itself — `deploy/aws/` provisions real AWS resources (EC2, S3, IAM) by name. This is the live, currently-running deployment | Terraform for a different cloud would need to be written from scratch — which is exactly why `deploy/compose/` also exists: same app, same Docker images, no cloud-specific code, runs on any plain Linux server |
+
+Two rules keep the "swappable" claim actually true instead of aspirational:
+no cloud SDK is installed by default (they're optional, only pulled in if
+that feature's actually used), and the application code itself never
+hardcodes a project name, region, or bucket — those are always environment
+variables, set by whatever infrastructure is running it.
+
+---
+
+## Roadmap
+
+- [x] **Foundation** — accounts, database, the API, and the whole app running
+      in Docker
+- [x] **Scanning engine** — all 6 scoring categories working, plus support
+      for private (not just public) repositories
+- [x] **Explainability** — every scan shows which commit it looked at, real
+      reasons when a scan fails instead of a bare error, what actually
+      passed rather than just what broke, and scan-to-scan comparison
+- [x] **Real security tooling** — swapped simple pattern-matching for actual
+      tools (Gitleaks, Trivy, Semgrep), each running sandboxed and
+      concurrently so they don't add up in total time
+- [x] **PDF reports** — every scan can be exported as a document, generated
+      on demand and cached so re-downloading the same scan is instant
+- [x] **Portable deployment** — a Docker Compose setup (`deploy/compose/`)
+      that runs the whole app on any plain Linux server on any cloud, not
+      tied to one provider
+- [x] **Live production deployment** — actually running on a real AWS
+      server (`deploy/aws/`), reachable over the internet with a real
+      domain and HTTPS
+- [x] **Full observability** — Prometheus, Grafana, and Loki running
+      alongside the live app: real-time dashboards for traffic, the scan
+      queue, container health, and searchable live logs
+- [ ] **Load testing** — not yet done; how the app behaves under heavy
+      concurrent scan traffic is still unverified
+
+Private repositories are accessed through a GitHub App rather than stored
+personal access tokens, so credentials expire automatically and nothing
+long-lived is ever saved.
+
+SentinelOps has been used to scan itself along the way, and it's caught real
+things worth admitting to: it once flagged its own missing CI setup (now
+fixed — see [.github/workflows/ci.yml](.github/workflows/ci.yml)), an
+outdated dependency (upgraded), and an oversized file (split up). The one
+finding still standing on purpose is the Docker socket mount described near
+the top of this page — that one's a deliberate trade-off, not an oversight.
+
+## Stack
+
+Everything actually used, and a plain reason for each:
+
+**Frontend**
+
+| Tool | Why this one |
+|---|---|
+| React + TypeScript | Standard, typed, huge ecosystem — no exotic choice here |
+| Vite | Fast dev server and build, minimal config compared to older bundlers |
+| Tailwind + shadcn/ui | Utility CSS plus accessible, unstyled component primitives — fast to build with, doesn't fight you |
+| TanStack Query | Handles server data fetching/caching/polling (used for live scan progress) without hand-rolling it |
+| Recharts | The category score bars and comparison charts |
+| Vitest | Fast, works natively with Vite's config, no separate test bundler needed |
+
+**Backend**
+
+| Tool | Why this one |
+|---|---|
+| FastAPI | Async-native, automatic request validation and OpenAPI docs from the same type hints |
+| Pydantic | Backs FastAPI's validation, also used for settings/config loading |
+| SQLAlchemy 2.0 (async) | The database layer, using its modern async API to match FastAPI |
+| Alembic | Generates and runs database schema migrations |
+| PostgreSQL | The real database — chosen over SQLite specifically because the schema leans on features (JSONB, native enums, cascading deletes) SQLite can't faithfully reproduce |
+| Redis + arq | The job queue — scans are queued here and picked up by the background worker, so the API never blocks waiting for a scan to finish |
+| bcrypt | Password hashing — used directly instead of the popular `passlib` wrapper, which is unmaintained and breaks on newer bcrypt versions |
+| PyJWT | Session tokens — chosen over `python-jose`, which is unmaintained and has had signature-verification vulnerabilities |
+| slowapi | Rate limiting on auth endpoints, to slow down brute-force login attempts |
+| pytest | The whole backend test suite, ~1,170 tests |
+
+**Infrastructure & ops**
+
+| Tool | Why this one |
+|---|---|
+| Docker Compose | Runs the whole stack (database, queue, API, worker, frontend) consistently in dev and in production |
+| Caddy | The production reverse proxy — handles HTTPS certificates automatically, no manual cert setup |
+| Prometheus | Collects numeric metrics (request rates, latency, queue depth) from the running app |
+| Grafana | Turns those metrics (and logs) into dashboards |
+| Loki + Grafana Alloy | Log collection and search — Alloy ships every container's logs to Loki as they're printed |
+| GitHub Actions | CI (tests/build on every push) and CD (actual deployment to the live server) — see below |
+
+---
+
 ## For developers
 
 ### Prerequisites
@@ -509,210 +713,6 @@ version rather than leaving the site broken.
 The monitoring stack (Prometheus/Grafana/Loki) is deliberately **not**
 part of either pipeline — it's set up once by hand and left running,
 the same way the database is, rather than being restarted on every deploy.
-
----
-
-## How it works
-
-**Inside the app**, when you click "Run scan":
-
-```
-Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
-                            │                 ▲
-                            ▼                 │
-                       Redis queue ──► Worker ┘
-                                          │
-                                          ▼
-                  clone → index → 6 scanners → 31 checks → score
-                                        │
-                                        └─ sandboxed tools (no network)
-```
-
-The API doesn't do the scanning itself — it just saves a record and drops a
-job in a queue, so it can reply instantly no matter how big the repo is. A
-separate worker process picks that job up, does the actual clone and scan,
-and the browser just polls for a result. Each of the 6 categories runs
-independently, so if one of them breaks, the scan still finishes with the
-rest — that one category just loses its points instead of the whole scan
-failing.
-
-**Around the app**, in production:
-
-```
-Terraform (deploy/aws/)
-    │  provisions
-    ▼
-AWS EC2 instance ──► Caddy (HTTPS + reverse proxy)
-    │                      │
-    │                      ├──► the app itself (diagram above)
-    │                      └──► Grafana (dashboards, password-protected)
-    │
-    └──► Prometheus + Loki + Alloy
-             (collect metrics & logs from every container)
-```
-
-The server itself — the VM, its network rules, its storage — is created by
-Terraform, so standing up the whole environment from nothing is one command,
-not a checklist. Caddy sits in front of everything as the single public
-door: it gets the HTTPS certificate and decides what goes where. Alongside
-the app, a monitoring stack watches it — Prometheus polls the app for
-numbers (traffic, queue size), Loki collects logs, and Grafana turns both
-into dashboards.
-
-### Project layout
-
-| Path | Contents |
-|---|---|
-| `backend/app/api/` | The HTTP layer — thin, just calls into `services/` |
-| `backend/app/services/` | The actual business logic, shared by both the API and the worker |
-| `backend/app/scanners/` | Takes a repository in, returns check results out — nothing else |
-| `backend/app/scanners/security/tools/` | One file per external tool (Gitleaks/Trivy/Semgrep) |
-| `backend/app/workers/` | Queue handling and repository cloning |
-| `backend/app/utils/sandbox.py` | The only code allowed to start a container that runs on a stranger's code |
-| `backend/app/models/` `schemas/` | Database tables, and API request/response shapes — kept deliberately separate |
-| `frontend/src/api/` `hooks/` | Functions that call the backend, and the React hooks wrapping them |
-| `frontend/src/pages/` `components/` | Screens, and the reusable pieces they're built from |
-| `deploy/aws/` | Terraform — creates the actual live server this runs on |
-| `deploy/compose/` | The portable version — same app, one Docker Compose file, runs on any Linux server |
-
-A couple of boundaries worth knowing about:
-
-- **API response shapes (`schemas/`) are kept separate from database tables
-  (`models/`)** on purpose. The `User` table has a password hash column; no
-  API response type even references it, so there's no way for it to
-  accidentally leak in a response.
-- **The scanning code doesn't know about the database, the API, or the
-  cloud.** It only knows how to read a repository and return results — which
-  means every scanner can be tested against a plain folder on disk, no real
-  app running required.
-
-### Security
-
-Since this app clones and inspects other people's code, it treats every
-repository as untrusted input:
-
-- Clones are shallow (no full history), and only the code itself — no
-  submodules, no large file storage
-- Hard limits on how long a clone can take and how much it can download
-- Git hooks are disabled, so a repo can't run its own scripts during clone
-- Symbolic links are never followed, so a link pointing outside the repo
-  (like `/etc`) can't be used to read the host machine
-- Every clone is deleted after the scan, success or failure
-- The worker runs as a non-root user, and only the worker (not the API) has
-  `git` installed at all
-
-The three tool-backed security checks go further, since they're the only
-part of this system that actually **runs** other people's code (via
-Gitleaks/Trivy/Semgrep): each runs in its own locked-down container with no
-network access at all, read-only filesystem access, every extra permission
-stripped, and a memory/CPU cap. If a scan needed to trust a sandbox, it can't
-— the sandbox refuses to run rather than run unsafely.
-
-On the account side: passwords are hashed with bcrypt, the login session is
-an `httpOnly` cookie (invisible to JavaScript, so it can't be stolen via a
-script-injection bug), login takes the same amount of time whether or not
-the account exists (so it can't be used to guess valid emails), and login
-attempts are rate-limited.
-
-### How tied to one cloud is this, really
-
-Not "runs anywhere with zero changes" — that claim is usually either untrue
-or very expensive to actually achieve. What's true here is narrower and
-easier to check: only a **small, named part** of the code knows it's talking
-to a specific cloud.
-
-| Layer | What it is | Cost to move it |
-|---|---|---|
-| **Fully swappable** | Three files — `utils/queue.py`, `utils/storage.py`, `utils/sandbox.py` — are the *only* places allowed to know about a specific cloud service or SDK | Write one new file. Nothing in the API, business logic, or scanners changes at all |
-| **Already works elsewhere** | Object storage (`S3Storage`) speaks the standard S3 API, which AWS, Cloudflare R2, DigitalOcean Spaces, and MinIO all understand. The sandbox just needs a Docker daemon, which every cloud's VM has | Change a URL and a bucket name — no code |
-| **Just a connection string** | Postgres and Redis | Point at a managed version of either (RDS, Neon, Upstash, etc.) — same protocol, different address |
-| **Actually cloud-specific** | The Terraform itself — `deploy/aws/` provisions real AWS resources (EC2, S3, IAM) by name. This is the live, currently-running deployment | Terraform for a different cloud would need to be written from scratch — which is exactly why `deploy/compose/` also exists: same app, same Docker images, no cloud-specific code, runs on any plain Linux server |
-
-Two rules keep the "swappable" claim actually true instead of aspirational:
-no cloud SDK is installed by default (they're optional, only pulled in if
-that feature's actually used), and the application code itself never
-hardcodes a project name, region, or bucket — those are always environment
-variables, set by whatever infrastructure is running it.
-
----
-
-## Roadmap
-
-- [x] **Foundation** — accounts, database, the API, and the whole app running
-      in Docker
-- [x] **Scanning engine** — all 6 scoring categories working, plus support
-      for private (not just public) repositories
-- [x] **Explainability** — every scan shows which commit it looked at, real
-      reasons when a scan fails instead of a bare error, what actually
-      passed rather than just what broke, and scan-to-scan comparison
-- [x] **Real security tooling** — swapped simple pattern-matching for actual
-      tools (Gitleaks, Trivy, Semgrep), each running sandboxed and
-      concurrently so they don't add up in total time
-- [x] **PDF reports** — every scan can be exported as a document, generated
-      on demand and cached so re-downloading the same scan is instant
-- [x] **Portable deployment** — a Docker Compose setup (`deploy/compose/`)
-      that runs the whole app on any plain Linux server on any cloud, not
-      tied to one provider
-- [x] **Live production deployment** — actually running on a real AWS
-      server (`deploy/aws/`), reachable over the internet with a real
-      domain and HTTPS
-- [x] **Full observability** — Prometheus, Grafana, and Loki running
-      alongside the live app: real-time dashboards for traffic, the scan
-      queue, container health, and searchable live logs
-- [ ] **Load testing** — not yet done; how the app behaves under heavy
-      concurrent scan traffic is still unverified
-
-Private repositories are accessed through a GitHub App rather than stored
-personal access tokens, so credentials expire automatically and nothing
-long-lived is ever saved.
-
-SentinelOps has been used to scan itself along the way, and it's caught real
-things worth admitting to: it once flagged its own missing CI setup (now
-fixed — see [.github/workflows/ci.yml](.github/workflows/ci.yml)), an
-outdated dependency (upgraded), and an oversized file (split up). The one
-finding still standing on purpose is the Docker socket mount described near
-the top of this page — that one's a deliberate trade-off, not an oversight.
-
-## Stack
-
-Everything actually used, and a plain reason for each:
-
-**Frontend**
-
-| Tool | Why this one |
-|---|---|
-| React + TypeScript | Standard, typed, huge ecosystem — no exotic choice here |
-| Vite | Fast dev server and build, minimal config compared to older bundlers |
-| Tailwind + shadcn/ui | Utility CSS plus accessible, unstyled component primitives — fast to build with, doesn't fight you |
-| TanStack Query | Handles server data fetching/caching/polling (used for live scan progress) without hand-rolling it |
-| Recharts | The category score bars and comparison charts |
-| Vitest | Fast, works natively with Vite's config, no separate test bundler needed |
-
-**Backend**
-
-| Tool | Why this one |
-|---|---|
-| FastAPI | Async-native, automatic request validation and OpenAPI docs from the same type hints |
-| Pydantic | Backs FastAPI's validation, also used for settings/config loading |
-| SQLAlchemy 2.0 (async) | The database layer, using its modern async API to match FastAPI |
-| Alembic | Generates and runs database schema migrations |
-| PostgreSQL | The real database — chosen over SQLite specifically because the schema leans on features (JSONB, native enums, cascading deletes) SQLite can't faithfully reproduce |
-| Redis + arq | The job queue — scans are queued here and picked up by the background worker, so the API never blocks waiting for a scan to finish |
-| bcrypt | Password hashing — used directly instead of the popular `passlib` wrapper, which is unmaintained and breaks on newer bcrypt versions |
-| PyJWT | Session tokens — chosen over `python-jose`, which is unmaintained and has had signature-verification vulnerabilities |
-| slowapi | Rate limiting on auth endpoints, to slow down brute-force login attempts |
-| pytest | The whole backend test suite, ~1,170 tests |
-
-**Infrastructure & ops**
-
-| Tool | Why this one |
-|---|---|
-| Docker Compose | Runs the whole stack (database, queue, API, worker, frontend) consistently in dev and in production |
-| Caddy | The production reverse proxy — handles HTTPS certificates automatically, no manual cert setup |
-| Prometheus | Collects numeric metrics (request rates, latency, queue depth) from the running app |
-| Grafana | Turns those metrics (and logs) into dashboards |
-| Loki + Grafana Alloy | Log collection and search — Alloy ships every container's logs to Loki as they're printed |
-| GitHub Actions | CI (tests/build on every push) and CD (actual deployment to the live server) — see below |
 
 ## License
 
