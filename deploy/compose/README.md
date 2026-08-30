@@ -147,8 +147,15 @@ separately if you're done with it.
 `docker-compose.observability.yml` — Prometheus, Grafana, Loki, Grafana
 Alloy (log shipping), node-exporter, and cAdvisor. `provision.sh` starts it
 alongside the app stack automatically; nothing here is optional-by-omission
-the way `SANDBOX_MAX_CONCURRENT` is, except `GRAFANA_ADMIN_PASSWORD`, which
-`provision.sh` generates the same way it generates `SECRET_KEY`.
+the way `SANDBOX_MAX_CONCURRENT` is, except `GRAFANA_ADMIN_PASSWORD` and
+`GRAFANA_VIEWER_PASSWORD`, which `provision.sh` generates the same way it
+generates `SECRET_KEY`.
+
+`provision.sh` also creates a second, read-only Grafana account (`viewer`)
+once Grafana is up — a plain call against Grafana's own Admin HTTP API,
+skipped if that account already exists so re-running `provision.sh` is
+still safe. It's the account to hand out when showing someone a dashboard;
+the admin login stays yours.
 
 **Static infra, not part of the release cadence.** Started once, left
 running — `deploy.sh` and `rollback.sh` never touch it, the same treatment
@@ -161,7 +168,7 @@ triggers.
 
 | | |
 |---|---|
-| Grafana | `https://<your domain>/grafana` — public, proxied through Caddy; sign in as `admin` with `GRAFANA_ADMIN_PASSWORD` from `.env` |
+| Grafana | `https://<your domain>/grafana` — public, proxied through Caddy; sign in as `admin` with `GRAFANA_ADMIN_PASSWORD`, or as `viewer` (read-only, safe to share) with `GRAFANA_VIEWER_PASSWORD` — both from `.env` |
 | Prometheus | `http://localhost:9090` via SSH tunnel only — `ssh -L 9090:localhost:9090 <host>` |
 | Loki | `http://localhost:3100` via SSH tunnel only — `ssh -L 3100:localhost:3100 <host>` |
 

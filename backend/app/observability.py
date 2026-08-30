@@ -73,6 +73,17 @@ def set_metrics_redis(redis: "ArqRedis") -> None:
     _redis = redis
 
 
+def get_metrics_redis() -> "ArqRedis | None":
+    """The same pool set_metrics_redis() stashed, for anything else that
+    wants a cheap Redis ping without opening a second connection.
+
+    Returns None when unset — tests never run lifespan (see main.py's
+    lifespan docstring), so any caller must treat "no pool yet" as a normal
+    case, not an error.
+    """
+    return _redis
+
+
 class PrometheusMiddleware:
     """Plain ASGI middleware, not BaseHTTPMiddleware.
 
@@ -156,6 +167,7 @@ async def render_metrics() -> bytes:
 __all__ = [
     "CONTENT_TYPE_LATEST",
     "PrometheusMiddleware",
+    "get_metrics_redis",
     "render_metrics",
     "set_metrics_redis",
 ]

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -6,14 +7,18 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
 
 from app.api import auth, findings, github, projects, reports, scans
+from app.api.deps import DbSession
 from app.config import get_settings
 from app.logging import configure_logging
 from app.observability import (
     CONTENT_TYPE_LATEST,
     PrometheusMiddleware,
+    get_metrics_redis,
     render_metrics,
     set_metrics_redis,
 )
@@ -135,6 +140,41 @@ def health() -> dict[str, str]:
     fails for reasons the process cannot act on.
     """
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready(db: DbSession) -> JSONResponse:
+    """Readiness probe: are this process's actual dependencies reachable?
+
+    Separate from /health on purpose — a load balancer or orchestrator
+    asking "should traffic go here?" needs this one; a container runtime
+    asking "is the process alive?" needs the shallow one instead, so a
+    transient DB blip doesn't get read as "restart the container."
+
+    Both checks are required for a 200 — "ready" means actually able to
+    serve, not "half of what it needs is up."
+    """
+    checks = {"database": False, "redis": False}
+
+    try:
+        await asyncio.wait_for(db.execute(text("SELECT 1")), timeout=2)
+        checks["database"] = True
+    except Exception:  # noqa: BLE001 - any failure here means "not ready", not a 500
+        pass
+
+    redis = get_metrics_redis()
+    if redis is not None:
+        try:
+            await asyncio.wait_for(redis.ping(), timeout=2)
+            checks["redis"] = True
+        except Exception:  # noqa: BLE001 - same as above
+            pass
+
+    ok = all(checks.values())
+    return JSONResponse(
+        {"status": "ok" if ok else "degraded", "checks": checks},
+        status_code=200 if ok else 503,
+    )
 
 
 @app.get("/metrics")
