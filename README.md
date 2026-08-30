@@ -11,10 +11,15 @@ it. It also shows which commit it looked at, what changed since the last
 scan, and what it *confirmed was fine*, not just what broke.
 
 [Quick start](#quick-start-5-minutes) ·
+[What it does](#what-it-does) ·
 [What it's for](#what-its-for) ·
+[What it checks](#what-it-checks) ·
 [Beyond the score](#beyond-the-score) ·
 [How it works](#how-it-works) ·
-[For developers](#for-developers)
+[Roadmap](#roadmap) ·
+[Stack](#stack) ·
+[For developers](#for-developers) ·
+[License](#license)
 
 </div>
 
@@ -494,6 +499,7 @@ Everything actually used, and a plain reason for each:
 
 | Tool | Why this one |
 |---|---|
+| Terraform | Provisions the actual AWS server (`deploy/aws/`) as code — the VM, its network rules, its storage — so standing up the whole environment from nothing is one command, not a manual checklist |
 | Docker Compose | Runs the whole stack (database, queue, API, worker, frontend) consistently in dev and in production |
 | Caddy | The production reverse proxy — handles HTTPS certificates automatically, no manual cert setup |
 | Prometheus | Collects numeric metrics (request rates, latency, queue depth) from the running app |
