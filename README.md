@@ -361,13 +361,13 @@ JavaScript, so it can't be stolen via an XSS bug) without breaking anything.
 ### Running the checks
 
 ```bash
-# Backend — 948 tests. Needs Postgres running. The sandbox integration tests
+# Backend — 1,168 tests. Needs Postgres running. The sandbox integration tests
 # skip themselves automatically if no Docker daemon is available.
 cd backend
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 
-# Frontend — 98 tests
+# Frontend — 107 tests
 cd frontend
 npm run typecheck && npm run lint && npm run test && npm run build
 ```
@@ -489,7 +489,7 @@ gated on the one before it passing:
 
 | Stage | What it does |
 |---|---|
-| Backend tests | Runs the full pytest suite (948 tests) against a real Postgres, plus linting and formatting checks |
+| Backend tests | Runs the full pytest suite (1,168 tests) against a real Postgres, plus linting and formatting checks |
 | Frontend tests | Type-checking, linting, unit tests, and a production build |
 | Image build | Actually builds the API and worker Docker images, then starts each one to check it doesn't crash on launch (a missing dependency can build fine and still fail the moment it runs) |
 | Publish to GHCR | Only runs when a version tag (`v1.2.3`) is pushed, and only after all three stages above have passed — pushes the built images to GitHub's container registry, tagged with the version and commit |
@@ -701,7 +701,7 @@ Everything actually used, and a plain reason for each:
 | bcrypt | Password hashing — used directly instead of the popular `passlib` wrapper, which is unmaintained and breaks on newer bcrypt versions |
 | PyJWT | Session tokens — chosen over `python-jose`, which is unmaintained and has had signature-verification vulnerabilities |
 | slowapi | Rate limiting on auth endpoints, to slow down brute-force login attempts |
-| pytest | The whole backend test suite, ~948 tests |
+| pytest | The whole backend test suite, ~1,168 tests |
 
 **Infrastructure & ops**
 

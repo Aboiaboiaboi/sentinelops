@@ -32,6 +32,7 @@ sign-in, and a real private-repository scan against the new domain.
 | Storage bucket | `sentinelops-reports-473183365846` — **stays in `us-east-1`** (see below), pinned via the `aws.us_east_1` provider alias in `versions.tf` regardless of `var.region` |
 | Fixed address | `13.206.43.42` / `13-206-43-42.sslip.io` (`aws_eip.app`) |
 | SSH | `ssh -i ~/.ssh/sentinelops-deploy.pem ubuntu@13.206.43.42` |
+| Monitoring | `https://13-206-43-42.sslip.io/grafana` — Prometheus, Grafana, Loki and Alloy, started by `provision.sh` alongside the app; see `deploy/compose/README.md`'s Observability section |
 
 **Instance type is `c7i-flex.large`, not `t3.medium`.** `t3.medium` is
 blocked on this account by an AWS Free Tier usage restriction —
@@ -202,11 +203,14 @@ type (the bucket, not `bucket/*`) and IAM would reject combining them.
   security group's ingress rules, which bounds what leaking it would cost —
   but a GitHub OIDC provider federated to an IAM role (no key at rest for
   either credential) is a real improvement over what's here, not yet built.
-- **No CloudWatch, no alerting.** If the instance runs out of disk or the
-  Docker daemon dies at 3am, nothing pages anyone. This is the same
-  observability gap the main README's self-scan reports about the
-  application itself (Observability −4) — the infrastructure has the matching
-  gap, and closing both is one session, not two.
+- **Dashboards and logs exist now, but nothing pages anyone.** Prometheus,
+  Grafana and Loki (`docker-compose.observability.yml`, started by
+  `provision.sh`) give real dashboards and searchable logs — see
+  `deploy/compose/README.md`'s Observability section — which closes the gap
+  the main README's self-scan used to report. What's still missing is
+  *alerting*: if the instance runs out of disk or the Docker daemon dies at
+  3am, the data to diagnose it after the fact is there, but nothing actively
+  notifies anyone. Grafana supports alert rules; none are configured yet.
 - **Single point of failure by design, not oversight.** One VM, one Postgres,
   one Redis, all on one host. That is the accepted trade this whole deployment
   path makes for "works on any cloud's cheapest VM" — see

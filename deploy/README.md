@@ -39,12 +39,15 @@ describing anything real. That is an acceptable outcome, not an emergency —
 nothing here is the working deployment any more (`deploy/compose/` is) — but it
 is worth knowing rather than discovering.
 
-**Next deployment is planned for AWS or Azure**, not a return to this project.
-This Terraform stays as the "one cloud, done properly" reference — real
-managed services, least-privilege IAM, Workload Identity Federation — and as
-documentation of what a from-scratch cloud deployment looked like the one time
-it was actually run. See `11-phase5-handoff.md` (outside the repository, in the
-handoff documents) for the full account.
+**The actual next deployment happened on AWS, not a return to this project** —
+`deploy/aws/` is the live one now: a real EC2 instance in `ap-south-1`,
+running the full app plus a Prometheus/Grafana/Loki monitoring stack, with
+its own domain and HTTPS. This GCP Terraform stays here as the "one cloud,
+done properly" reference — real managed services, least-privilege IAM,
+Workload Identity Federation — and as documentation of what a from-scratch
+cloud deployment looked like the one time it was actually run. See
+`11-phase5-handoff.md` (outside the repository, in the handoff documents) for
+the full account.
 
 ## Running it, if you do decide to revive or fork this
 

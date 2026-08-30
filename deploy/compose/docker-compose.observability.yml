@@ -85,11 +85,12 @@ services:
 
   # Ships every container's stdout/stderr to Loki via Docker service
   # discovery — present and future containers in either compose file, no
-  # per-service config needed. Grafana's current log shipper — Promtail
-  # (the original pick here) is Grafana's own deprecated predecessor,
-  # end-of-life with no further updates. Read-only mount of the Docker
-  # socket: needed only to discover which containers exist and read their
-  # logs/metadata (image, compose service label), never to control them.
+  # per-service config needed. Alloy is Grafana's current log shipper;
+  # Promtail (the original pick here) is Grafana's own deprecated
+  # predecessor, end-of-life with no further updates. Read-only mount of
+  # the Docker socket: needed only to discover which containers exist and
+  # read their logs/metadata (image, compose service label), never to
+  # control them.
   alloy:
     image: grafana/alloy:v1.19.2
     restart: unless-stopped

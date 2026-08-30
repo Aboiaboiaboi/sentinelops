@@ -23,7 +23,7 @@ variable "instance_type" {
     cheaper of the two allowed options with more RAM than t3.small
     (m7i-flex.large has 8GB but costs more). Resized up from t3.small once
     the observability stack (Prometheus, Grafana, Loki, node-exporter,
-    cAdvisor, Promtail) was actually added — see
+    cAdvisor, Alloy) was actually added — see
     deploy/compose/docker-compose.observability.yml. t3.small fit tightly
     (~1.35GB steady state of 2GB); this leaves genuine headroom for a scan
     burst during a live demo. ~$62/month if run 24/7 — far less in practice,

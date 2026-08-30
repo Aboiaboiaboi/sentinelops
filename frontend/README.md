@@ -74,37 +74,21 @@ white-paper palette, so `ReportPage` still prints.
 
 ## Auth
 
-There is no `/auth/me` in the API and the JWT cookie is unreadable from JS, so
-the app cannot check session state up front. `lib/queryClient.ts` treats any 401
-as "session gone" and broadcasts it; `ProtectedRoute` listens and redirects.
-
-## Open questions for the backend
-
-These are blocked on backend decisions, not on frontend work. Nothing here is
-faked in the UI.
-
-1. **The scanner categories and the scoring weights are not one agreed list.**
-   The six categories the worker reports in `category_status` do not map
-   cleanly onto the scoring weights, so `lib/categories.ts` currently ships a
-   placeholder weight table. **Preferred fix:** return each category's
-   `maxScore` in the API response, so that table can be *deleted* rather than
-   hand-synced forever.
-2. **No `POST /auth/logout`.** The cookie is httpOnly, so JS cannot clear it —
-   there is deliberately no sign-out button, because a client-side one that
-   dropped the query cache and redirected would leave the user still
-   authenticated. This needs an endpoint before the UI can offer it.
-3. **No `GET /auth/me`.** Would remove the brief logged-out flash that
-   `ProtectedRoute.tsx` documents.
-4. **No per-category points** in `GET /scans/{id}` — only an overall score and
-   each category's status. Until they arrive, a completed category renders at its
-   full weight cap.
+The JWT cookie is `httpOnly` and unreadable from JS, so `ProtectedRoute`
+asks `GET /auth/me` to find out whether a session actually exists before
+rendering anything behind it — that's the only way to know up front. Beyond
+that initial check, `lib/queryClient.ts` treats any 401 from any request as
+"session gone," broadcasts it, and `ProtectedRoute` redirects to sign-in.
+Sign-out is a real `POST /auth/logout` call, not just a client-side cookie
+drop.
 
 ## Decisions worth knowing
 
 - **Tailwind v4**, so there is no `tailwind.config.js` — theme tokens live in
   `src/index.css` under `@theme`.
-- `lib/categories.ts` holds a placeholder weight table until the backend returns
-  per-category caps — see **Open questions for the backend** above.
+- `lib/categories.ts` only holds display labels now — category weights and
+  scores both come straight from the API (`category_scores`,
+  `category_max_scores`), so there's no separate table to keep in sync.
 - Added `components/ErrorBoundary.tsx`. React unmounts the whole tree on a render
   throw, which would otherwise leave a blank page with the reason only in the
   console. `errorElement` was not an option — the app uses `<BrowserRouter>` +

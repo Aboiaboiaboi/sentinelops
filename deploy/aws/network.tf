@@ -25,7 +25,7 @@ data "aws_subnets" "default" {
 
 # Pinned to one subnet rather than "any of them" — an instance's subnet
 # determines its availability zone, and an apply that silently moved the
-# instance to a different AZ on every run would be surprising. us-east-1a is
+# instance to a different AZ on every run would be surprising. ap-south-1a is
 # where the instance in use today actually runs.
 data "aws_subnet" "app" {
   filter {
