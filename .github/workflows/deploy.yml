@@ -63,11 +63,16 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_DEFAULT_REGION: us-east-1
+  # Region migrated us-east-1 -> ap-south-1 on 2026-08-30 (deploy/aws/README.md);
+  # both this and SECURITY_GROUP_ID below are real-resource identifiers, not
+  # repository variables, and both changed when the instance did — a stale
+  # value here fails at "Open SSH from this runner" with the old security
+  # group simply not existing any more, not a subtle error.
+  AWS_DEFAULT_REGION: ap-south-1
   # deploy/aws's aws_security_group.web. Not a repository variable — it names
   # a specific AWS resource, the same category of thing instance_id and
   # storage_bucket are, and those are not variables either.
-  SECURITY_GROUP_ID: sg-0a36e01938dd8eb73
+  SECURITY_GROUP_ID: sg-0f7f90b5a28020efe
 
 jobs:
   deploy:
