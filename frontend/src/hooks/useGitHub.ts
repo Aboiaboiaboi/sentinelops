@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { listInstallations, listRepositories } from '@/api/github';
-import { USE_FIXTURES, store } from '@/lib/fixtures';
 
 export const githubKeys = {
   installations: ['github', 'installations'] as const,
@@ -10,7 +9,7 @@ export const githubKeys = {
 export function useGitHubInstallations() {
   return useQuery({
     queryKey: githubKeys.installations,
-    queryFn: USE_FIXTURES ? store.listInstallations : listInstallations,
+    queryFn: listInstallations,
   });
 }
 
@@ -24,7 +23,7 @@ export function useGitHubInstallations() {
 export function useGitHubRepositories(enabled: boolean) {
   return useQuery({
     queryKey: githubKeys.repositories,
-    queryFn: USE_FIXTURES ? store.listRepositories : listRepositories,
+    queryFn: listRepositories,
     enabled,
     // The grant changes on GitHub, not here, so refetching on every focus
     // would spend rate limit to learn nothing.

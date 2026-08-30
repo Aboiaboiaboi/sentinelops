@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { login, logout, me, signup } from '@/api/auth';
 import { isUnauthorized } from '@/api/client';
-import { USE_FIXTURES, store } from '@/lib/fixtures';
 import type { Credentials, User } from '@/types/project';
 
 /**
@@ -25,7 +24,6 @@ export function useSession() {
   return useQuery<User | null>({
     queryKey: sessionKey,
     queryFn: async () => {
-      if (USE_FIXTURES) return store.getSession();
       try {
         return await me();
       } catch (error) {
@@ -71,7 +69,7 @@ export function useSignup() {
 export function useLogout() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => (USE_FIXTURES ? store.logout() : logout()),
+    mutationFn: () => logout(),
     // Cleared after the server has answered, not before: a failed logout must
     // leave the app in the signed-in state it is actually still in.
     onSuccess: () => {

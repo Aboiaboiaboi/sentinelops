@@ -2,10 +2,30 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ReportPage from './ReportPage';
-import { fixtureScan } from '@/lib/fixtures';
 import type { ScanStatus, ScanSummary } from '@/types/scan';
 
-let scan: ScanSummary = fixtureScan;
+const baseScan: ScanSummary = {
+  id: 'scan_demo',
+  project_id: 'project_demo',
+  name: null,
+  status: 'completed',
+  score: 88,
+  scoring_version: 'v2',
+  category_status: {},
+  category_scores: {},
+  category_max_scores: {},
+  error_category: null,
+  error_detail: null,
+  error_hint: null,
+  commit_sha: null,
+  commit_message: null,
+  commit_author: null,
+  committed_at: null,
+  created_at: '2026-01-01T00:00:00Z',
+  completed_at: '2026-01-01T00:05:00Z',
+};
+
+let scan: ScanSummary = baseScan;
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -21,7 +41,7 @@ vi.mock('@/hooks/useFindings', () => ({
 }));
 
 function renderAt(status: ScanStatus) {
-  scan = { ...fixtureScan, status, score: status === 'completed' ? fixtureScan.score : null };
+  scan = { ...baseScan, status, score: status === 'completed' ? baseScan.score : null };
   render(
     <MemoryRouter>
       <ReportPage />

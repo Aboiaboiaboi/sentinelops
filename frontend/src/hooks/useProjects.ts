@@ -6,7 +6,6 @@ import {
   listProjects,
   updateProject,
 } from '@/api/projects';
-import { USE_FIXTURES, store } from '@/lib/fixtures';
 import type { CreateProjectInput, UpdateProjectInput } from '@/types/project';
 
 export const projectKeys = {
@@ -14,19 +13,17 @@ export const projectKeys = {
   detail: (id: string) => ['projects', id] as const,
 };
 
-// Fixture mode is switched here rather than in the pages, so no page has to know
-// it exists. See lib/fixtures.ts.
 export function useProjects() {
   return useQuery({
     queryKey: projectKeys.all,
-    queryFn: USE_FIXTURES ? store.listProjects : listProjects,
+    queryFn: listProjects,
   });
 }
 
 export function useProject(id: string | undefined) {
   return useQuery({
     queryKey: projectKeys.detail(id ?? ''),
-    queryFn: () => (USE_FIXTURES ? store.getProject(id as string) : getProject(id as string)),
+    queryFn: () => getProject(id as string),
     enabled: Boolean(id),
   });
 }
@@ -34,8 +31,7 @@ export function useProject(id: string | undefined) {
 export function useCreateProject() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (input: CreateProjectInput) =>
-      USE_FIXTURES ? store.createProject(input) : createProject(input),
+    mutationFn: (input: CreateProjectInput) => createProject(input),
     onSuccess: () => client.invalidateQueries({ queryKey: projectKeys.all }),
   });
 }
@@ -43,8 +39,7 @@ export function useCreateProject() {
 export function useUpdateProject(projectId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (input: UpdateProjectInput) =>
-      USE_FIXTURES ? store.updateProject(projectId, input) : updateProject(projectId, input),
+    mutationFn: (input: UpdateProjectInput) => updateProject(projectId, input),
     onSuccess: () => {
       // Both: the detail page shows the project, and the dashboard list shows
       // its name.
@@ -57,8 +52,7 @@ export function useUpdateProject(projectId: string) {
 export function useDeleteProject() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      USE_FIXTURES ? store.deleteProject(id) : deleteProject(id),
+    mutationFn: (id: string) => deleteProject(id),
     onSuccess: () => client.invalidateQueries({ queryKey: projectKeys.all }),
   });
 }

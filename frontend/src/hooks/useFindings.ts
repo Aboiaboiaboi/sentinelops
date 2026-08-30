@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { getComparison, listChecks, listFindings } from '@/api/findings';
-import { USE_FIXTURES, store } from '@/lib/fixtures';
 import { SEVERITY_ORDER, type Finding } from '@/types/finding';
 
 export const findingKeys = {
@@ -17,8 +16,7 @@ export const findingKeys = {
 export function useFindings(scanId: string | undefined, enabled = true) {
   return useQuery({
     queryKey: findingKeys.forScan(scanId ?? ''),
-    queryFn: () =>
-      USE_FIXTURES ? store.listFindings(scanId as string) : listFindings(scanId as string),
+    queryFn: () => listFindings(scanId as string),
     enabled: Boolean(scanId) && enabled,
     select: (findings: Finding[]) =>
       [...findings].sort(
@@ -38,8 +36,7 @@ export function useFindings(scanId: string | undefined, enabled = true) {
 export function useChecks(scanId: string | undefined, enabled: boolean) {
   return useQuery({
     queryKey: findingKeys.checksForScan(scanId ?? ''),
-    queryFn: () =>
-      USE_FIXTURES ? store.listChecks(scanId as string) : listChecks(scanId as string),
+    queryFn: () => listChecks(scanId as string),
     enabled: Boolean(scanId) && enabled,
   });
 }
@@ -54,8 +51,7 @@ export function useChecks(scanId: string | undefined, enabled: boolean) {
 export function useComparison(scanId: string | undefined, enabled = true) {
   return useQuery({
     queryKey: findingKeys.comparisonForScan(scanId ?? ''),
-    queryFn: () =>
-      USE_FIXTURES ? store.getComparison(scanId as string) : getComparison(scanId as string),
+    queryFn: () => getComparison(scanId as string),
     enabled: Boolean(scanId) && enabled,
   });
 }

@@ -9,26 +9,11 @@ npm install
 npm run dev
 ```
 
-The backend does not exist yet. To run the whole app without it:
-
-```bash
-echo "VITE_USE_FIXTURES=true" > .env.local
-npm run dev
-```
-
-Fixture mode covers **all five screens**, including create/delete project and
-Run scan. The switch is consumed in `hooks/`, so no page knows fixtures exist —
-deleting `lib/fixtures.ts` and the `USE_FIXTURES ? … : …` lines in `hooks/`
-removes the whole mechanism.
-
-Two things worth eyeballing:
-
-- `/scans/scan_demo` — the seeded scan holds all three category states at once
-  (`completed`, `pending`, `failed`), which is the case the breakdown chart
-  exists to disambiguate.
-- **Run scan** on a project — the fixture scan takes 6s and moves through its
-  categories, so it exercises the real polling loop and the pending → completed
-  transition rather than jumping to a finished result.
+The backend is a real dependency now — run it via `docker compose up -d` at
+the repository root (see the root `README.md`) before `npm run dev`. The
+fixture-data mode this section used to describe (`lib/fixtures.ts`,
+`VITE_USE_FIXTURES`) has been removed now that the real API covers every
+screen end to end.
 
 ## Checks
 

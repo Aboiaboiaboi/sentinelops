@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getScan, listScans, renameScan, startScan } from '@/api/scans';
-import { USE_FIXTURES, store } from '@/lib/fixtures';
 import { isScanFinished, type ScanSummary } from '@/types/scan';
 import { projectKeys } from './useProjects';
 
@@ -19,7 +18,7 @@ const POLL_INTERVAL_MS = 3_000;
 export function useScan(scanId: string | undefined) {
   return useQuery({
     queryKey: scanKeys.detail(scanId ?? ''),
-    queryFn: () => (USE_FIXTURES ? store.getScan(scanId as string) : getScan(scanId as string)),
+    queryFn: () => getScan(scanId as string),
     enabled: Boolean(scanId),
     // Returning false ends the polling loop — no effect or cleanup needed.
     refetchInterval: (query) =>
@@ -34,8 +33,7 @@ export function useScan(scanId: string | undefined) {
 export function useProjectScans(projectId: string | undefined) {
   return useQuery({
     queryKey: scanKeys.forProject(projectId ?? ''),
-    queryFn: () =>
-      USE_FIXTURES ? store.listScans(projectId as string) : listScans(projectId as string),
+    queryFn: () => listScans(projectId as string),
     enabled: Boolean(projectId),
   });
 }
@@ -43,8 +41,7 @@ export function useProjectScans(projectId: string | undefined) {
 export function useStartScan(projectId: string | undefined) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      USE_FIXTURES ? store.startScan(projectId as string) : startScan(projectId as string),
+    mutationFn: () => startScan(projectId as string),
     onSuccess: (scan: ScanSummary) => {
       // Seed the detail cache so the results page has data on first paint
       // instead of flashing a spinner before the first poll lands.
@@ -67,8 +64,7 @@ export function useStartScan(projectId: string | undefined) {
 export function useRenameScan(scanId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (name: string | null) =>
-      USE_FIXTURES ? store.renameScan(scanId, name) : renameScan(scanId, name),
+    mutationFn: (name: string | null) => renameScan(scanId, name),
     onSuccess: (scan: ScanSummary) => {
       client.setQueryData(scanKeys.detail(scanId), scan);
       client.invalidateQueries({ queryKey: scanKeys.forProject(scan.project_id) });
