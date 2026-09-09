@@ -1,6 +1,6 @@
 import { Suspense } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
+import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLogout, useSession } from '@/hooks/useAuth';
@@ -23,9 +23,8 @@ export function AppLayout() {
     <div className="min-h-screen bg-background">
       <header className="border-b">
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-2 px-4">
-          <Link to="/dashboard" className="flex items-center gap-2 font-semibold">
-            <ShieldCheck className="size-5 text-primary-bright" />
-            SentinelOps
+          <Link to="/dashboard">
+            <Logo size="sm" />
           </Link>
 
           <div className="ml-auto flex items-center gap-3">
@@ -67,9 +66,8 @@ export function AuthLayout() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center justify-center gap-2 font-semibold">
-          <ShieldCheck className="size-5 text-primary-bright" />
-          SentinelOps
+        <div className="mb-6 flex justify-center">
+          <Logo size="md" />
         </div>
         <Outlet />
       </div>

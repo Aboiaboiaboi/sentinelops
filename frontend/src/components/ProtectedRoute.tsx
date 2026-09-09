@@ -67,8 +67,3 @@ export function ProtectedRoute() {
 
   return <Outlet />;
 }
-
-/** Sends `/` to the dashboard. */
-export function IndexRedirect() {
-  return <Navigate to="/dashboard" replace />;
-}

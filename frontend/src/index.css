@@ -108,6 +108,14 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Loaded in index.html. font-sans is what `body` inherits (see @layer base
+     below); font-display is for headings; font-mono is for scores, commit
+     SHAs, and severity labels — CommitContext.tsx already uses font-mono and
+     picks up JetBrains Mono here for free. */
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 @layer base {
