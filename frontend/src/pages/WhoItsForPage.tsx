@@ -85,17 +85,35 @@ export default function WhoItsForPage() {
       </section>
 
       {/* Two honest limits */}
-      <section className="mx-auto max-w-3xl px-4 py-12 text-center sm:py-16">
+      <section className="mx-auto max-w-2xl px-4 py-12 sm:py-16">
         <Reveal className="flex flex-col gap-4">
-          <p className="text-muted-foreground">
-            Two honest limits worth knowing. <span className="text-foreground">
-            Scores only compare like with like</span> — a CLI tool skips all
-            three scalability checks, so it can never reach 90, and its 85
-            doesn&rsquo;t mean the same thing as a web service&rsquo;s 85.
-            And <span className="text-foreground">it never runs your
-            code</span>, so anything that only shows up at runtime is
-            invisible to it. Think of it as a readiness checklist that shows
-            its work, not a penetration test.
+          <p className="text-center text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            Two honest limits
+          </p>
+          <ul className="flex flex-col gap-3 text-muted-foreground">
+            <li className="flex gap-3">
+              <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-bright" />
+              <span>
+                <span className="text-foreground">Scores aren&rsquo;t directly
+                comparable across very different projects.</span> A simple
+                command-line tool, for example, can&rsquo;t score 100 the same
+                way a full web app can — some checks just don&rsquo;t apply
+                to it.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-bright" />
+              <span>
+                <span className="text-foreground">It reviews the code
+                itself, not the app while it&rsquo;s running</span> — so it
+                won&rsquo;t catch a problem that only shows up once the
+                software is actually in use.
+              </span>
+            </li>
+          </ul>
+          <p className="text-center text-muted-foreground">
+            Think of it as a thorough pre-launch checklist, not a live
+            security test.
           </p>
         </Reveal>
       </section>

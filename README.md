@@ -195,12 +195,16 @@ second copy of the app).
 | Notebooks and research code | There's no service here to assess |
 | A monorepo holding several services | It scores the repo as one unit, so one weak service can hide inside a good average |
 
-Two honest limits worth knowing. **Scores only compare like with like** — a
-CLI tool skips all three scalability checks, so it can never reach 90, and
-its 85 doesn't mean the same thing as a web service's 85. And **it never runs
-your code**, so anything that only shows up at runtime is invisible to it.
-Think of it as a readiness checklist that shows its work, not a penetration
-test.
+Two honest limits worth knowing:
+
+- **Scores aren't directly comparable across very different projects.** A
+  simple command-line tool, for example, can't score 100 the same way a
+  full web app can — some checks just don't apply to it.
+- **It reviews the code itself, not the app while it's running** — so it
+  won't catch a problem that only shows up once the software is actually
+  in use.
+
+Think of it as a thorough pre-launch checklist, not a live security test.
 
 ---
 
