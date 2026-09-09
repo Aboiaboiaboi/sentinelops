@@ -1,24 +1,17 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, GitBranch, ListChecks, Cog, ShieldOff, Gauge } from 'lucide-react';
+import { ChecksExplorer } from '@/components/marketing/ChecksExplorer';
 import { Reveal } from '@/components/marketing/Reveal';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { CHECK_CATALOG, TOTAL_CHECK_COUNT } from '@/lib/checkCatalog';
 
 const PIPELINE = [
   { icon: GitBranch, title: 'Clone', description: 'A shallow, read-only clone — no history, no submodules.' },
   { icon: Cog, title: 'Index', description: 'The tree is walked once into a shared repository index.' },
   { icon: ListChecks, title: '6 scanners', description: 'Security, Reliability, Architecture, Deployment, Observability, Scalability — each runs independently.' },
-  { icon: Gauge, title: '31 checks', description: 'Every check returns passed, failed, skipped, or errored — never a bare pass/fail.' },
+  { icon: Gauge, title: `${TOTAL_CHECK_COUNT} checks`, description: 'Every check returns passed, failed, skipped, or errored — never a bare pass/fail.' },
   { icon: ShieldOff, title: 'Score', description: 'Weighted into a score out of 100, with every finding attached.' },
-];
-
-const CATEGORIES = [
-  { name: 'Security', weight: 25 },
-  { name: 'Reliability', weight: 20 },
-  { name: 'Architecture', weight: 20 },
-  { name: 'Deployment', weight: 15 },
-  { name: 'Observability', weight: 10 },
-  { name: 'Scalability', weight: 10 },
 ];
 
 export default function HowItWorksPage() {
@@ -67,16 +60,29 @@ export default function HowItWorksPage() {
             </p>
           </Reveal>
           <Reveal stagger={40} className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            {CATEGORIES.map((cat) => (
-              <Card key={cat.name} className="border-border/60 bg-card/60">
+            {CHECK_CATALOG.map((cat) => (
+              <Card key={cat.category} className="border-border/60 bg-card/60">
                 <CardContent className="p-4">
-                  <p className="font-display text-sm font-medium">{cat.name}</p>
+                  <p className="font-display text-sm font-medium">{cat.category}</p>
                   <p className="font-mono text-2xl text-primary-bright">{cat.weight}</p>
                 </CardContent>
               </Card>
             ))}
           </Reveal>
         </div>
+      </section>
+
+      {/* The checks themselves */}
+      <section className="mx-auto max-w-6xl px-4 py-16 sm:py-20">
+        <Reveal className="mb-10 text-center">
+          <h2 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
+            All {TOTAL_CHECK_COUNT} checks, if you want to see them.
+          </h2>
+          <p className="mt-2 text-muted-foreground">
+            Grouped by category. Expand any of them.
+          </p>
+        </Reveal>
+        <ChecksExplorer />
       </section>
 
       {/* Sandboxing */}

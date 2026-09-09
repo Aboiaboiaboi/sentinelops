@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout, AuthLayout } from '@/components/AppLayout';
 import { MarketingLayout } from '@/components/marketing/MarketingLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -19,6 +19,7 @@ const ReportPage = lazy(() => import('@/pages/ReportPage'));
 // tooling it never uses.
 const LandingPage = lazy(() => import('@/pages/LandingPage'));
 const HowItWorksPage = lazy(() => import('@/pages/HowItWorksPage'));
+const WhoItsForPage = lazy(() => import('@/pages/WhoItsForPage'));
 
 function NotFound() {
   return (
@@ -34,9 +35,11 @@ export default function App() {
       {/* Public — reachable logged out. useSession() inside MarketingLayout
           resolves a 401 to null rather than redirecting, so these render
           for anyone; the nav CTA just swaps based on session state. */}
+      <Route path="/" element={<Navigate to="/home" replace />} />
       <Route element={<MarketingLayout />}>
-        <Route path="/" element={<LandingPage />} />
+        <Route path="/home" element={<LandingPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
+        <Route path="/who-its-for" element={<WhoItsForPage />} />
       </Route>
 
       <Route element={<AuthLayout />}>
