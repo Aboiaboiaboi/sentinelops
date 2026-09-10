@@ -163,9 +163,9 @@ class TestErroredOutcome:
 
     def test_reaches_no_verdict(self) -> None:
         """Which is what the worker uses to decide a category assessed nothing.
-        Errored and skipped agree here for different reasons; passed and failed
+        Errored and skipped agree here for different reasons; passed and flagged
         are the only outcomes that concluded anything."""
-        assert CONCLUSIVE_OUTCOMES == {CheckOutcome.PASSED, CheckOutcome.FAILED}
+        assert CONCLUSIVE_OUTCOMES == {CheckOutcome.PASSED, CheckOutcome.FLAGGED}
         assert errored(self.CHECK, "x").outcome not in CONCLUSIVE_OUTCOMES
         assert skipped(self.CHECK, "x").outcome not in CONCLUSIVE_OUTCOMES
 

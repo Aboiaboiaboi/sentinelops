@@ -26,7 +26,14 @@ export function ScanStatusBadge({
   const inFlight = status === 'pending' || status === 'running';
 
   return (
-    <Badge variant="outline" className={cn(STATUS_CLASS[status], className)}>
+    <Badge
+      variant="outline"
+      className={cn(
+        'font-mono text-[0.625rem] uppercase tracking-[0.12em]',
+        STATUS_CLASS[status],
+        className,
+      )}
+    >
       <span
         className={cn(
           'mr-1.5 size-1.5 rounded-full bg-current',

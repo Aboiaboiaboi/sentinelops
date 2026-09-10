@@ -55,12 +55,12 @@ _SEVERITY_RANK: Mapping[str, int] = {
     Severity.LOW: 3,
 }
 
-# Checks are listed worst-first for the same reason as findings: the failures
-# are what the reader is looking for. `errored` outranks `skipped` because it is
-# our failure to report on something, and burying it would make an incomplete
-# scan look thorough.
+# Checks are listed worst-first for the same reason as findings: the flagged
+# ones are what the reader is looking for. `errored` outranks `skipped` because
+# it is our failure to report on something, and burying it would make an
+# incomplete scan look thorough.
 _OUTCOME_RANK: Mapping[str, int] = {
-    CheckOutcome.FAILED: 0,
+    CheckOutcome.FLAGGED: 0,
     CheckOutcome.ERRORED: 1,
     CheckOutcome.SKIPPED: 2,
     CheckOutcome.PASSED: 3,

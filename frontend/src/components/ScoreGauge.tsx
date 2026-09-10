@@ -70,10 +70,13 @@ export function ScoreGauge({ score, className }: ScoreGaugeProps) {
       </svg>
 
       <div className="absolute flex flex-col items-center">
-        <span className="text-3xl font-semibold tabular-nums">
+        {/* Not the editorial gold: the arc already colour-codes this number
+            via scoreColor(), and a second colour on the same value that
+            disagrees with the arc would be worse than one. */}
+        <span className="font-display text-4xl font-semibold leading-none tracking-tight tabular-nums">
           {score === null ? '—' : score}
         </span>
-        <span className="text-xs text-muted-foreground">
+        <span className="mt-1.5 font-mono text-xs uppercase tracking-[0.15em] text-muted-foreground">
           {score === null ? 'pending' : `Grade ${scoreToGrade(score)}`}
         </span>
       </div>

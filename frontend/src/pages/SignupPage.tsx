@@ -27,9 +27,9 @@ export default function SignupPage() {
   }
 
   return (
-    <Card>
+    <Card className="border-border/60 bg-card/60">
       <CardHeader>
-        <CardTitle>Create an account</CardTitle>
+        <CardTitle className="font-display tracking-tight">Create an account</CardTitle>
         <CardDescription>Start scanning your repositories.</CardDescription>
       </CardHeader>
 

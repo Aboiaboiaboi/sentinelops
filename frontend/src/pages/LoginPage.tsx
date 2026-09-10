@@ -28,9 +28,9 @@ export default function LoginPage() {
   }
 
   return (
-    <Card>
+    <Card className="border-border/60 bg-card/60">
       <CardHeader>
-        <CardTitle>Sign in</CardTitle>
+        <CardTitle className="font-display tracking-tight">Sign in</CardTitle>
         <CardDescription>Assess a repository's production readiness.</CardDescription>
       </CardHeader>
 

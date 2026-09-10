@@ -37,7 +37,7 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     errored,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -162,7 +162,7 @@ def scan_code_patterns(check: CheckSpec, repo: RepositoryIndex) -> CheckResult:
     if not matches:
         return passed(check)
 
-    return failed(check, _finding(matches))
+    return flagged(check, _finding(matches))
 
 
 def _relevant_matches(

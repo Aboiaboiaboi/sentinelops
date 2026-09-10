@@ -9,14 +9,14 @@ import type { CheckOutcome, CheckResult } from '@/types/check';
 
 const OUTCOME_ICON = {
   passed: Check,
-  failed: X,
+  flagged: X,
   skipped: Minus,
   errored: AlertTriangle,
 } as const;
 
 const OUTCOME_CLASS: Record<CheckOutcome, string> = {
   passed: 'text-scan-completed',
-  failed: 'text-severity-high',
+  flagged: 'text-severity-high',
   skipped: 'text-muted-foreground',
   // Amber rather than grey: an errored check is not a quiet non-event. It is a
   // question this scan failed to answer, and the reader should notice.
@@ -39,7 +39,7 @@ function summarise(checks: CheckResult[]): string {
   const parts = [`${count('passed')} passed`];
   // Only states actually present are named, so a healthy category reads
   // "5 passed" rather than trailing two zeroes nobody needs.
-  for (const outcome of ['failed', 'skipped', 'errored'] as const) {
+  for (const outcome of ['flagged', 'skipped', 'errored'] as const) {
     const total = count(outcome);
     if (total) parts.push(`${total} ${outcome}`);
   }
@@ -59,22 +59,26 @@ export function ScanChecks({ scanId }: { scanId: string }) {
   const { data: checks, isPending, isError } = useChecks(scanId, open);
 
   return (
-    <section className="rounded-lg border">
-      <Button
-        variant="ghost"
-        className="h-auto w-full justify-between px-4 py-3 font-normal"
-        aria-expanded={open}
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
-      >
-        <span className="text-sm font-medium">What was checked</span>
-        <ChevronDown
-          className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')}
-          aria-hidden="true"
-        />
-      </Button>
+    <section className="overflow-hidden rounded-lg border border-border/60 bg-card/40">
+      <h2>
+        <Button
+          variant="ghost"
+          className="h-auto w-full justify-between rounded-none px-4 py-3 font-normal"
+          aria-expanded={open}
+          onClick={() => setOpen((wasOpen) => !wasOpen)}
+        >
+          <span className="font-mono text-xs font-medium uppercase tracking-[0.15em]">
+            What was checked
+          </span>
+          <ChevronDown
+            className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')}
+            aria-hidden="true"
+          />
+        </Button>
+      </h2>
 
       {open && (
-        <div className="border-t px-4 py-3">
+        <div className="border-t border-border/60 px-4 py-3">
           {isPending && <Skeleton className="h-24 w-full" />}
 
           {isError && (
@@ -95,8 +99,10 @@ export function ScanChecks({ scanId }: { scanId: string }) {
               {groupByCategory(checks).map(([category, categoryChecks]) => (
                 <div key={category}>
                   <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                    <h4 className="text-sm font-medium">{categoryLabel(category)}</h4>
-                    <span className="text-xs text-muted-foreground">
+                    <h3 className="font-mono text-xs font-medium uppercase tracking-[0.15em] text-muted-foreground">
+                      {categoryLabel(category)}
+                    </h3>
+                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
                       {summarise(categoryChecks)}
                     </span>
                   </div>

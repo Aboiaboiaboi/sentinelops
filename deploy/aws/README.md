@@ -7,9 +7,10 @@ group that decides what can reach it. Everything the instance actually *runs*
 This directory's job stops at "a Linux box with a public IP and an IAM role
 attached."
 
-Where `../*.tf` is the one-cloud, managed-services deployment for GCP — a
-dedicated VPC, Cloud SQL, Memorystore, Workload Identity Federation — this is
-deliberately smaller. One VM running Docker Compose, in the account's existing
+Where `../gcp/` is the one-cloud, managed-services deployment for GCP — a
+dedicated VPC, Cloud SQL, Memorystore, Workload Identity Federation, now frozen
+(see `../gcp/README.md`) — this is deliberately smaller. One VM running Docker
+Compose, in the account's existing
 default VPC, with local Terraform state rather than a remote backend. Six
 resources, not forty. See `versions.tf` and `network.tf` for why each of those
 simplifications is fine at this size and what would make them not fine.
@@ -95,8 +96,8 @@ this, and costs a bootstrap step to set up before that day. Until then,
 needs.
 
 **No dedicated VPC.** The instance runs in the account's default VPC and
-subnet, read as data sources rather than created. `../network.tf` builds a
-real VPC for GCP because that deployment also runs Cloud SQL and Memorystore
+subnet, read as data sources rather than created. `../gcp/network.tf.frozen`
+builds a real VPC for GCP because that deployment also runs Cloud SQL and Memorystore
 on private IPs behind it — there is a genuine peering and egress story there.
 Here, Postgres and Redis are containers on the same host as the API; there is
 nothing for a dedicated VPC to isolate that Docker's own network doesn't
@@ -214,6 +215,6 @@ type (the bucket, not `bucket/*`) and IAM would reject combining them.
 - **Single point of failure by design, not oversight.** One VM, one Postgres,
   one Redis, all on one host. That is the accepted trade this whole deployment
   path makes for "works on any cloud's cheapest VM" — see
-  `deploy/compose/README.md` and `11-phase5-handoff.md` for where the managed,
-  highly-available alternative lives (`../*.tf`, for GCP, when that account's
-  billing is usable again).
+  `deploy/compose/README.md` for where the managed, highly-available
+  alternative was built (`../gcp/`, for GCP — frozen now, but the config is
+  intact if that account's billing is ever usable again).

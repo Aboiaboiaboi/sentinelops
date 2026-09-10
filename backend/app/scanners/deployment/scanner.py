@@ -27,7 +27,7 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     errored,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -212,7 +212,7 @@ class DeploymentScanner:
 
             results: list[CheckResult] = []
             if not dockerfiles and not has_orchestration:
-                results.append(failed(_CONFIG, self._no_deployment_config()))
+                results.append(flagged(_CONFIG, self._no_deployment_config()))
                 # Nothing describes the deployment, so there is nothing to
                 # inspect for pinning, privileges or build context. Reporting
                 # those as passed would credit a repository for a file it
@@ -320,7 +320,7 @@ class DeploymentScanner:
             )
         else:
             results.append(
-                failed(
+                flagged(
                     _DOCKERIGNORE,
                     ScanFinding(
                         category=CATEGORY,
@@ -345,7 +345,7 @@ class DeploymentScanner:
             results.append(passed(_PINNING))
         else:
             results.append(
-                failed(
+                flagged(
                     _PINNING,
                     ScanFinding(
                         category=CATEGORY,
@@ -385,7 +385,7 @@ class DeploymentScanner:
             results.append(passed(_NON_ROOT))
         else:
             results.append(
-                failed(
+                flagged(
                     _NON_ROOT,
                     ScanFinding(
                         category=CATEGORY,
@@ -411,7 +411,7 @@ class DeploymentScanner:
             results.append(passed(_HEALTHCHECK))
         else:
             results.append(
-                failed(
+                flagged(
                     _HEALTHCHECK,
                     ScanFinding(
                         category=CATEGORY,
@@ -436,7 +436,7 @@ class DeploymentScanner:
         else:
             where, instruction = shell_entry
             results.append(
-                failed(
+                flagged(
                     _SIGNALS,
                     ScanFinding(
                         category=CATEGORY,
@@ -480,7 +480,7 @@ class DeploymentScanner:
             if description is None:
                 continue
             relative = repo.relative(path)
-            return failed(
+            return flagged(
                 _PRIVILEGED,
                 ScanFinding(
                     category=CATEGORY,
@@ -516,7 +516,7 @@ class DeploymentScanner:
         if repo.has_root_entry(*_CI_ROOT_FILES):
             return passed(_CI)
 
-        return failed(
+        return flagged(
             _CI,
             ScanFinding(
                 category=CATEGORY,

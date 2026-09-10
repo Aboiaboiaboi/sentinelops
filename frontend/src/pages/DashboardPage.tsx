@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PageHeader } from '@/components/PageHeader';
+import { RowList, Row } from '@/components/Rows';
 import { GitHubConnection } from '@/components/GitHubConnection';
 import { RepositoryPicker } from '@/components/RepositoryPicker';
 import { useCreateProject, useDeleteProject, useProjects } from '@/hooks/useProjects';
@@ -45,24 +47,23 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Projects</h1>
-          <p className="text-sm text-muted-foreground">
-            Repositories tracked for production readiness.
-          </p>
-        </div>
-        <Button onClick={() => setShowForm((open) => !open)}>
-          <Plus /> Add project
-        </Button>
-      </div>
+      <PageHeader
+        caption="Repositories tracked for production readiness."
+        actions={
+          <Button onClick={() => setShowForm((open) => !open)}>
+            <Plus /> Add project
+          </Button>
+        }
+      >
+        Projects
+      </PageHeader>
 
       <GitHubConnection />
 
       {showForm && (
-        <Card>
+        <Card className="border-border/60 bg-card/60">
           <CardHeader>
-            <CardTitle className="text-base">New project</CardTitle>
+            <CardTitle className="font-display text-base tracking-tight">New project</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-4">
@@ -131,50 +132,44 @@ export default function DashboardPage() {
       )}
 
       {projects && projects.length === 0 && (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            No projects yet. Add a repository to run your first scan.
-          </CardContent>
-        </Card>
+        <div className="rounded-lg border border-dashed border-border/60 py-10 text-center text-sm text-muted-foreground">
+          No projects yet. Add a repository to run your first scan.
+        </div>
       )}
 
       {projects && projects.length > 0 && (
-        <ul className="space-y-3">
+        <RowList as="ul">
           {projects.map((project) => (
-            <li key={project.id}>
-              <Card>
-                <CardContent className="flex items-center justify-between gap-4 py-4">
-                  <div className="min-w-0">
-                    <Link
-                      to={`/projects/${project.id}`}
-                      className="font-medium hover:underline"
-                    >
-                      {project.name}
-                    </Link>
-                    <p className="truncate text-sm text-muted-foreground">
-                      {project.repository_url}
-                    </p>
-                    {project.framework && (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Detected: {project.framework}
-                      </p>
-                    )}
-                  </div>
+            <Row key={project.id} as="li" className="py-4">
+              <div className="min-w-0">
+                <Link
+                  to={`/projects/${project.id}`}
+                  className="font-display font-medium tracking-tight hover:underline"
+                >
+                  {project.name}
+                </Link>
+                <p className="truncate font-mono text-xs text-muted-foreground">
+                  {project.repository_url}
+                </p>
+                {project.framework && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Detected: {project.framework}
+                  </p>
+                )}
+              </div>
 
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Delete ${project.name}`}
-                    disabled={deleteProject.isPending}
-                    onClick={() => deleteProject.mutate(project.id)}
-                  >
-                    <Trash2 className="text-muted-foreground" />
-                  </Button>
-                </CardContent>
-              </Card>
-            </li>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Delete ${project.name}`}
+                disabled={deleteProject.isPending}
+                onClick={() => deleteProject.mutate(project.id)}
+              >
+                <Trash2 className="text-muted-foreground" />
+              </Button>
+            </Row>
           ))}
-        </ul>
+        </RowList>
       )}
     </div>
   );

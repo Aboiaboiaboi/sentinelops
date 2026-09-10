@@ -57,7 +57,7 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     errored,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -135,7 +135,7 @@ def scan_dockerfiles(
     if not findings:
         return passed(check)
 
-    return failed(check, _finding(findings))
+    return flagged(check, _finding(findings))
 
 
 def _relevant_findings(report: list, repo_mount: str) -> list[tuple[str, str, str]]:

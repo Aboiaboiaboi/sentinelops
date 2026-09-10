@@ -46,19 +46,19 @@ class CheckChange:
 
     @property
     def is_regression(self) -> bool:
-        return self.current_outcome == "failed" and self.previous_outcome != "failed"
+        return self.current_outcome == "flagged" and self.previous_outcome != "flagged"
 
     @property
     def is_improvement(self) -> bool:
         """Only a move to `passed` is a fix.
 
-        Deliberately not "stopped failing". A check that went from failed to
-        skipped stopped applying — deleting the Dockerfile silences every
+        Deliberately not "stopped being flagged". A check that went from flagged
+        to skipped stopped applying — deleting the Dockerfile silences every
         deployment check without improving anything — and one that went to
         errored means our own tool broke. Both would have been congratulated
         here, which is how a comparison starts lying.
         """
-        return self.previous_outcome == "failed" and self.current_outcome == "passed"
+        return self.previous_outcome == "flagged" and self.current_outcome == "passed"
 
 
 @dataclass(frozen=True)

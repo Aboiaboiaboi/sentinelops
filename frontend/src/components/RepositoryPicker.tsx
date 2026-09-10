@@ -39,7 +39,7 @@ export function RepositoryPicker({ open, onPick }: RepositoryPickerProps) {
   }
 
   return (
-    <ul className="max-h-56 space-y-1 overflow-y-auto rounded-md border p-1">
+    <ul className="max-h-56 divide-y divide-border/60 overflow-y-auto rounded-md border border-border/60">
       {repositories.map((repository) => (
         <li key={repository.full_name}>
           {/* The label is explicit rather than left to be computed from the
@@ -51,13 +51,13 @@ export function RepositoryPicker({ open, onPick }: RepositoryPickerProps) {
             type="button"
             variant="ghost"
             aria-label={`Select ${repository.full_name}${repository.private ? ' (private)' : ''}`}
-            className="h-auto w-full justify-start gap-2 px-2 py-1.5 font-normal"
+            className="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 font-normal"
             onClick={() => onPick(repository)}
           >
             {repository.private && (
               <Lock className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             )}
-            <span className="truncate">{repository.full_name}</span>
+            <span className="truncate font-mono text-xs">{repository.full_name}</span>
           </Button>
         </li>
       ))}

@@ -8,7 +8,12 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow hover:bg-primary/90',
+        // Gold on hover, not a dimmed blue: the primary action is the one place
+        // the marketing pages' accent reaches an interactive control. The text
+        // colour has to swap with it — near-white on honey-gold is ~1.3:1,
+        // while --background on the same gold is ~10.9:1.
+        default:
+          'bg-primary text-primary-foreground shadow hover:bg-editorial hover:text-background',
         destructive:
           'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90',
         outline:

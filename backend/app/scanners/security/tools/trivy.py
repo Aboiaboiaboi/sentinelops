@@ -33,7 +33,7 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     errored,
-    failed,
+    flagged,
     is_test_file,
     passed,
     skipped,
@@ -163,7 +163,7 @@ def scan_dependencies(check: CheckSpec, repo: RepositoryIndex) -> CheckResult:
     if not vulnerabilities:
         return passed(check)
 
-    return failed(check, _finding(vulnerabilities))
+    return flagged(check, _finding(vulnerabilities))
 
 
 def _count_all(results: Iterable[Any]) -> int:

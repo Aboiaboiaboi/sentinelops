@@ -141,7 +141,7 @@ class TestChecks:
                     "id": "sec-2",
                     "category": "security",
                     "title": "No secrets in source",
-                    "outcome": "failed",
+                    "outcome": "flagged",
                 },
             ]
         }
@@ -151,7 +151,7 @@ class TestChecks:
         assert "Checks performed" in text
         assert "Debug mode off" in text
         assert "No secrets in source" in text
-        assert "failed" in text
+        assert "flagged" in text
 
     def test_shows_why_a_check_was_skipped(self) -> None:
         """A skip with no explanation is the dead end check results replaced."""

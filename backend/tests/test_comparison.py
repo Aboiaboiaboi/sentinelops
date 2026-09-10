@@ -143,7 +143,7 @@ class TestScoreAndCategories:
 class TestCheckChanges:
     def test_reports_only_checks_whose_outcome_moved(self) -> None:
         previous = _scan(
-            check_results=[_check("security.tls", "failed"), _check("security.debug", "passed")]
+            check_results=[_check("security.tls", "flagged"), _check("security.debug", "passed")]
         )
         current = _scan(
             check_results=[_check("security.tls", "passed"), _check("security.debug", "passed")]
@@ -152,16 +152,16 @@ class TestCheckChanges:
         changes = compare(previous, current).checks
 
         assert [c.id for c in changes] == ["security.tls"]
-        assert changes[0].previous_outcome == "failed"
+        assert changes[0].previous_outcome == "flagged"
         assert changes[0].current_outcome == "passed"
 
     def test_regressions_come_before_improvements(self) -> None:
         """What broke is the thing somebody needs to see first."""
         previous = _scan(
-            check_results=[_check("security.a", "failed"), _check("security.b", "passed")]
+            check_results=[_check("security.a", "flagged"), _check("security.b", "passed")]
         )
         current = _scan(
-            check_results=[_check("security.a", "passed"), _check("security.b", "failed")]
+            check_results=[_check("security.a", "passed"), _check("security.b", "flagged")]
         )
 
         changes = compare(previous, current).checks
@@ -175,7 +175,7 @@ class TestCheckChanges:
         a change would credit or blame somebody for a SentinelOps release."""
         previous = _scan(check_results=[_check("security.a", "passed")])
         current = _scan(
-            check_results=[_check("security.a", "passed"), _check("security.brand_new", "failed")]
+            check_results=[_check("security.a", "passed"), _check("security.brand_new", "flagged")]
         )
 
         assert compare(previous, current).checks == []
@@ -189,7 +189,7 @@ class TestCheckChanges:
         lies in the direction people want to believe.
         """
         for outcome in ("skipped", "errored"):
-            previous = _scan(check_results=[_check("security.a", "failed")])
+            previous = _scan(check_results=[_check("security.a", "flagged")])
             current = _scan(check_results=[_check("security.a", outcome)])
 
             change = compare(previous, current).checks[0]

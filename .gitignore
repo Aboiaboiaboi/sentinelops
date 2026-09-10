@@ -56,23 +56,24 @@ reports/
 # Terraform. The provider directory is hundreds of megabytes of downloaded
 # binary; the lock file next to it is NOT ignored, because it pins the provider
 # hashes and is the reason two people get the same plan.
-deploy/.terraform/
 deploy/aws/.terraform/
+deploy/gcp/.terraform/
 # State never belongs in git: it holds every generated password in plain text,
 # and two people committing it produces a merge conflict that no longer
-# describes any real infrastructure. deploy/'s lives in the bucket
-# bootstrap.sh makes; deploy/aws/'s is local state, deliberately (see
-# deploy/aws/versions.tf) and stays out of git for the same reason.
+# describes any real infrastructure. deploy/gcp/'s lived in the bucket
+# bootstrap.sh made (that GCP path is frozen — see deploy/gcp/README.md);
+# deploy/aws/'s is local state, deliberately (see deploy/aws/versions.tf) and
+# stays out of git for the same reason.
 *.tfstate
 *.tfstate.*
 # Names one particular deployment, and backend.hcl points at its state bucket.
-deploy/terraform.tfvars
-deploy/backend.hcl
+deploy/gcp/terraform.tfvars
+deploy/gcp/backend.hcl
 deploy/aws/terraform.tfvars
 # `terraform plan` output saved to a file for review. Useful in the moment,
 # stale the moment the config or the real infrastructure changes again — the
 # same reason .tfstate is ignored, one step removed.
-deploy/*.out
+deploy/**/*.out
 plan*.out
 crash.log
 

@@ -50,6 +50,7 @@ export function ProtectedRoute() {
     // fill in behind — the placeholder has to supply its own page shell.
     return (
       <div className="min-h-screen bg-background">
+        <div className="h-14 border-b border-border/60" />
         <div className="mx-auto max-w-5xl px-4 py-8">
           <Skeleton className="h-64 w-full" />
         </div>

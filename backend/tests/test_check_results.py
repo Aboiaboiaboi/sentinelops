@@ -111,7 +111,7 @@ class TestOutcomeInvariants:
         results = scanner.scan(RepositoryIndex.build(repo, framework="FastAPI"))
 
         for result in results:
-            if result.outcome is CheckOutcome.FAILED:
+            if result.outcome is CheckOutcome.FLAGGED:
                 assert result.finding is not None, result.id
                 assert result.finding.category == scanner.category
 
@@ -219,8 +219,8 @@ class TestScoringIsUnchanged:
         repo = request.getfixturevalue(repo_name)
         results = scanner.scan(RepositoryIndex.build(repo, framework="FastAPI"))
 
-        failed = [r for r in results if r.outcome is CheckOutcome.FAILED]
-        assert len(findings_of(results)) == len(failed)
+        flagged = [r for r in results if r.outcome is CheckOutcome.FLAGGED]
+        assert len(findings_of(results)) == len(flagged)
 
     @ALL_SCANNERS
     def test_a_healthy_service_produces_no_findings(self, scanner, service_repo: Path) -> None:

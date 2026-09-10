@@ -41,13 +41,13 @@ export function MarketingLayout() {
           <nav className="ml-auto flex items-center gap-6">
             <Link
               to="/how-it-works"
-              className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
+              className="hidden font-mono text-xs uppercase tracking-[0.15em] text-muted-foreground transition-colors hover:text-foreground sm:inline"
             >
               How it works
             </Link>
             <Link
               to="/who-its-for"
-              className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
+              className="hidden font-mono text-xs uppercase tracking-[0.15em] text-muted-foreground transition-colors hover:text-foreground sm:inline"
             >
               Who it&rsquo;s for
             </Link>
@@ -59,7 +59,7 @@ export function MarketingLayout() {
               <>
                 <Link
                   to="/login"
-                  className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
+                  className="hidden font-mono text-xs uppercase tracking-[0.15em] text-muted-foreground transition-colors hover:text-foreground sm:inline"
                 >
                   Sign in
                 </Link>
@@ -83,7 +83,7 @@ export function MarketingLayout() {
           {/* Always visible, unlike the header's nav links (hidden below
               sm) — with three public pages now, a phone visitor needs some
               way to reach them besides the header CTA. */}
-          <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
+          <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono text-xs uppercase tracking-[0.15em]">
             <Link to="/home" className="transition-colors hover:text-foreground">
               Home
             </Link>

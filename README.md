@@ -133,7 +133,7 @@ this — a real scan of **this repository, run just now**, not a mockup:
 ```
 sentinelops                                        94 / 100    Grade A
 6 of 6 categories reported
-33 checks: 26 passed · 4 skipped · 3 failed
+33 checks: 26 passed · 4 skipped · 3 flagged
 
   Security         25 / 25   ████████████████████
   Reliability      20 / 20   ████████████████████
@@ -159,10 +159,9 @@ this project's own Dockerfile and Terraform:
 > instead of full access.
 
 > **Infrastructure misconfiguration found** · HIGH · −3
-> `deploy/aws/ci.tf` — one of 32 checks Checkov failed against this
-> project's real Terraform, starting with access that should go through SSO
-> rather than an IAM user. A property of the infrastructure itself, not the
-> application code.
+> `deploy/aws/ci.tf` — one of 13 Checkov policies this project's Terraform
+> doesn't pass, starting with access that should go through SSO rather than an
+> IAM user. A property of the infrastructure itself, not the application code.
 
 > **Dockerfile lint findings** · LOW · −1
 > `backend/Dockerfile` installs an apt package without pinning its version —
@@ -291,7 +290,7 @@ The deployment category runs two more real tools, for the same reason:
 A scanner that flags things that are actually fine gets ignored — and an
 ignored scanner is useless. So it's deliberately conservative:
 
-- **Doesn't-apply is reported as skipped, never as failed.** A CLI tool
+- **Doesn't-apply is reported as skipped, never as flagged.** A CLI tool
   isn't expected to have a web health-check endpoint, and that's shown
   honestly as "skipped," not silently marked as passing either.
 - **Test code is judged differently than real code.** A swallowed error in
@@ -325,7 +324,7 @@ context to actually check it:
 | | What you get | Why it matters |
 |---|---|---|
 | **Commit context** | The exact commit that was scanned — SHA, message, author, date | "The score dropped 6" becomes "the score dropped 6 *at this specific commit*" |
-| **Every check's outcome** | All 33 checks, each marked passed, failed, skipped (with a reason), or errored | A perfect score can show you what was actually verified, not just that nothing complained |
+| **Every check's outcome** | All 33 checks, each marked passed, flagged, skipped (with a reason), or errored | A perfect score can show you what was actually verified, not just that nothing complained |
 | **Comparison to the last scan** | Score and per-category movement, plus exactly which checks changed | Shows regressions first — what got worse matters most |
 | **Failure diagnostics** | If a scan itself fails, you get which category, a plain explanation, and a suggested fix | Better than a bare "scan failed" with no next step |
 | **PDF report** | `GET /scans/{id}/report` — the full score, breakdown, findings, and all 33 checks as a downloadable document | Something you can attach to a ticket or hand to someone without a login |
@@ -698,7 +697,7 @@ def _check_health(self, repo: RepositoryIndex, has_health: bool) -> CheckResult:
         return skipped(_HEALTH, "only asked of something that serves traffic")
     if has_health:
         return passed(_HEALTH)
-    return failed(_HEALTH, ScanFinding(...))
+    return flagged(_HEALTH, ScanFinding(...))
 ```
 
 Scanners themselves are plain, ordinary (synchronous) functions — the repo

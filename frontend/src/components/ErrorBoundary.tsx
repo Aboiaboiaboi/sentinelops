@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 
 /**
  * Last-resort catch for render-time exceptions, which React otherwise handles by
@@ -43,9 +43,11 @@ export class ErrorBoundary extends Component<Props, State> {
 
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
-        <Card className="w-full max-w-md">
+        <Card className="w-full max-w-md border-border/60 bg-card/60">
           <CardHeader>
-            <CardTitle>Something went wrong</CardTitle>
+            <h1 className="font-display text-xl font-semibold tracking-tight">
+              Something went wrong
+            </h1>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
@@ -53,7 +55,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </p>
             {/* The message, not the stack: enough to report the problem without
                 putting internals on screen. */}
-            <p className="rounded-md border bg-muted/40 p-3 font-mono text-xs break-words">
+            <p className="border-l-2 border-destructive/40 pl-4 font-mono text-xs break-words">
               {error.message}
             </p>
             <Button onClick={() => window.location.reload()}>Reload the page</Button>

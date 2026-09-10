@@ -32,7 +32,7 @@ from app.scanners.base import (
     Severity,
     code_only,
     errored,
-    failed,
+    flagged,
     is_test_file,
     passed,
     skipped,
@@ -428,7 +428,7 @@ class SecurityScanner:
         if not found:
             return passed(_CREDENTIAL_FILES)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return failed(
+        return flagged(
             _CREDENTIAL_FILES,
             ScanFinding(
                 category=CATEGORY,
@@ -455,7 +455,7 @@ class SecurityScanner:
         if not found:
             return passed(_DEBUG)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return failed(
+        return flagged(
             _DEBUG,
             ScanFinding(
                 category=CATEGORY,
@@ -481,7 +481,7 @@ class SecurityScanner:
         if not found:
             return passed(_TLS)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return failed(
+        return flagged(
             _TLS,
             ScanFinding(
                 category=CATEGORY,
@@ -507,7 +507,7 @@ class SecurityScanner:
         if not found:
             return passed(_CONTAINER)
         others = f" and {len(found) - 1} other files" if len(found) > 1 else ""
-        return failed(
+        return flagged(
             _CONTAINER,
             ScanFinding(
                 category=CATEGORY,
@@ -537,7 +537,7 @@ class SecurityScanner:
         if ".env" in gitignore:
             return passed(_GITIGNORE)
 
-        return failed(
+        return flagged(
             _GITIGNORE,
             ScanFinding(
                 category=CATEGORY,

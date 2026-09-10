@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PageHeader } from '@/components/PageHeader';
+import { SectionLabel } from '@/components/SectionLabel';
 import { CategoryBreakdownChart } from '@/components/CategoryBreakdownChart';
 import { CommitContext } from '@/components/CommitContext';
 import { FindingsList } from '@/components/FindingsList';
@@ -76,13 +78,17 @@ export default function ReportPage() {
         )}
       </div>
 
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Production readiness report</h1>
-        <p className="text-sm text-muted-foreground">
-          Generated {new Date(scan.created_at).toLocaleString()}
-          {scan.scoring_version && ` · scoring ${scan.scoring_version}`}
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Report"
+        caption={
+          <>
+            Generated {new Date(scan.created_at).toLocaleString()}
+            {scan.scoring_version && ` · scoring ${scan.scoring_version}`}
+          </>
+        }
+      >
+        Production readiness report
+      </PageHeader>
 
       {!complete && (
         <Alert variant="warning">
@@ -93,23 +99,31 @@ export default function ReportPage() {
         </Alert>
       )}
 
-      <Card>
+      <Card className="border-border/60 bg-card/60">
         <CardContent className="flex flex-wrap items-center gap-8 py-6">
           <ScoreGauge score={scan.score} />
-          <dl className="grid gap-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">Overall</dt>
-              <dd className="text-lg font-semibold tabular-nums">
+          <dl className="grid gap-4 text-sm sm:grid-cols-3">
+            <div className="space-y-1">
+              <dt className="font-mono text-xs font-medium uppercase tracking-[0.15em] text-muted-foreground">
+                Overall
+              </dt>
+              <dd className="font-display text-xl font-semibold tracking-tight tabular-nums">
                 {scan.score === null ? '—' : `${scan.score}/100`}
               </dd>
             </div>
-            <div>
-              <dt className="text-muted-foreground">Grade</dt>
-              <dd className="text-lg font-semibold">{scoreToGrade(scan.score)}</dd>
+            <div className="space-y-1">
+              <dt className="font-mono text-xs font-medium uppercase tracking-[0.15em] text-muted-foreground">
+                Grade
+              </dt>
+              <dd className="font-display text-xl font-semibold tracking-tight">
+                {scoreToGrade(scan.score)}
+              </dd>
             </div>
-            <div>
-              <dt className="text-muted-foreground">Categories reported</dt>
-              <dd className="text-lg font-semibold tabular-nums">
+            <div className="space-y-1">
+              <dt className="font-mono text-xs font-medium uppercase tracking-[0.15em] text-muted-foreground">
+                Categories reported
+              </dt>
+              <dd className="font-display text-xl font-semibold tracking-tight tabular-nums">
                 {reported}/{total}
               </dd>
             </div>
@@ -117,9 +131,11 @@ export default function ReportPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="border-border/60 bg-card/60">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Category breakdown</CardTitle>
+          <CardTitle className="font-display text-base tracking-tight">
+            Category breakdown
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <CategoryBreakdownChart categories={categories} />
@@ -128,10 +144,10 @@ export default function ReportPage() {
 
       <CommitContext scan={scan} />
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          Findings{findings ? ` (${findings.length})` : ''}
-        </h2>
+      <section aria-labelledby="report-findings">
+        <SectionLabel id="report-findings" count={findings ? findings.length : undefined}>
+          Findings
+        </SectionLabel>
         {findings?.length === 0 && (
           <p className="text-sm text-muted-foreground">No findings recorded.</p>
         )}

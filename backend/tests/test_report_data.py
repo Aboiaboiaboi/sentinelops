@@ -339,7 +339,7 @@ class TestChecks:
                     "id": "sec-3",
                     "category": "security",
                     "title": "A failing check",
-                    "outcome": CheckOutcome.FAILED.value,
+                    "outcome": CheckOutcome.FLAGGED.value,
                 },
                 {
                     "id": "sec-4",

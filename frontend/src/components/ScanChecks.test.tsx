@@ -16,7 +16,7 @@ const checks: CheckResult[] = [
     id: 'security.debug_mode',
     category: 'security',
     title: 'Debug mode off',
-    outcome: 'failed',
+    outcome: 'flagged',
     reason: null,
   },
   {
@@ -53,7 +53,7 @@ describe('ScanChecks', () => {
   it('names every outcome present in the summary', async () => {
     await open();
 
-    expect(screen.getByText('1 passed · 1 failed · 1 errored')).toBeInTheDocument();
+    expect(screen.getByText('1 passed · 1 flagged · 1 errored')).toBeInTheDocument();
     expect(screen.getByText('0 passed · 1 skipped')).toBeInTheDocument();
   });
 

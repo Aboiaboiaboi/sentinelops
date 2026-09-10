@@ -26,7 +26,7 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     errored,
-    failed,
+    flagged,
     is_test_file,
     passed,
 )
@@ -143,7 +143,7 @@ def scan_for_secrets(check: CheckSpec, repo: RepositoryIndex) -> CheckResult:
     if not leaks:
         return passed(check)
 
-    return failed(check, _finding(leaks))
+    return flagged(check, _finding(leaks))
 
 
 def _relevant_leaks(

@@ -53,7 +53,9 @@ export function ScanName({ scan }: { scan: ScanSummary }) {
 
   return (
     <div className="flex items-center gap-2">
-      <h1 className="text-2xl font-semibold">{scan.name ?? 'Scan results'}</h1>
+      <h1 className="font-display text-2xl font-semibold tracking-tight">
+        {scan.name ?? 'Scan results'}
+      </h1>
       <Button
         variant="ghost"
         size="icon"

@@ -20,7 +20,9 @@ export function ScanFailure({ scan }: { scan: ScanSummary }) {
           <p>{scan.error_detail ?? 'This scan failed before it could produce a score.'}</p>
           {scan.error_hint && (
             <p className="text-sm opacity-90">
-              <span className="font-medium">What to try: </span>
+              <span className="mr-1.5 font-mono text-xs font-medium uppercase tracking-[0.12em]">
+                What to try
+              </span>
               {scan.error_hint}
             </p>
           )}

@@ -67,6 +67,11 @@ class CheckOutcome(enum.StrEnum):
     and "this is a CLI tool, the question does not apply" were both an empty
     list — the difference destroyed at the moment it was known.
 
+    `flagged` (not "failed") is the check that ran fine and found something. The
+    word matters: "failed" reads as "the tool broke", which is what `errored`
+    means. A flagged check has a finding attached and costs points; the scan
+    itself is working exactly as intended.
+
     `errored` is the same argument one level further. A check backed by a tool
     that timed out, crashed, or had no sandbox to run in has not established
     anything — but it is *our* failure, not a property of the repository.
@@ -75,7 +80,7 @@ class CheckOutcome(enum.StrEnum):
     """
 
     PASSED = "passed"
-    FAILED = "failed"
+    FLAGGED = "flagged"
     SKIPPED = "skipped"
     ERRORED = "errored"
 
@@ -83,7 +88,7 @@ class CheckOutcome(enum.StrEnum):
 #: Outcomes that mean the check actually reached a verdict about the repository.
 #: `skipped` and `errored` are both "no verdict", for different reasons, and the
 #: worker uses this to decide whether a category assessed anything at all.
-CONCLUSIVE_OUTCOMES = frozenset({CheckOutcome.PASSED, CheckOutcome.FAILED})
+CONCLUSIVE_OUTCOMES = frozenset({CheckOutcome.PASSED, CheckOutcome.FLAGGED})
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,9 +116,9 @@ class CheckResult:
     title: str
     outcome: CheckOutcome
     #: Why there is no verdict — that it did not apply (SKIPPED), or that it
-    #: could not be completed (ERRORED). Never set for PASSED or FAILED.
+    #: could not be completed (ERRORED). Never set for PASSED or FLAGGED.
     reason: str | None = None
-    #: The problem found. Only ever set for FAILED.
+    #: The problem found. Only ever set for FLAGGED.
     finding: ScanFinding | None = None
 
 
@@ -130,8 +135,11 @@ def skipped(check: CheckSpec, reason: str) -> CheckResult:
     return CheckResult(id=check.id, title=check.title, outcome=CheckOutcome.SKIPPED, reason=reason)
 
 
-def failed(check: CheckSpec, finding: ScanFinding) -> CheckResult:
-    return CheckResult(id=check.id, title=check.title, outcome=CheckOutcome.FAILED, finding=finding)
+def flagged(check: CheckSpec, finding: ScanFinding) -> CheckResult:
+    """The check ran and found a problem. Not an error — the scan worked."""
+    return CheckResult(
+        id=check.id, title=check.title, outcome=CheckOutcome.FLAGGED, finding=finding
+    )
 
 
 def errored(check: CheckSpec, reason: str) -> CheckResult:
@@ -170,7 +178,7 @@ class Scanner(Protocol):
         Takes the shared index rather than a path, so that six scanners do not
         each walk the same tree. See `RepositoryIndex`.
 
-        Returns one result per declared check — passed, failed or skipped.
+        Returns one result per declared check — passed, flagged or skipped.
         Returning results rather than findings is what makes a score
         explainable: a category showing full marks can say *what it verified*
         rather than merely having nothing to complain about.

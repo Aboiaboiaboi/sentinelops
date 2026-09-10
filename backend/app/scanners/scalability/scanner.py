@@ -23,7 +23,7 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     code_only,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -243,7 +243,7 @@ class ScalabilityScanner:
                 "that request handlers write to, so each instance accumulates its own copy."
             )
 
-        return failed(
+        return flagged(
             _STATE,
             ScanFinding(
                 category=CATEGORY,
@@ -270,7 +270,7 @@ class ScalabilityScanner:
         if not local_uploads:
             return passed(_STORAGE)
         others = f" and {len(local_uploads) - 1} other files" if len(local_uploads) > 1 else ""
-        return failed(
+        return flagged(
             _STORAGE,
             ScanFinding(
                 category=CATEGORY,
@@ -294,7 +294,7 @@ class ScalabilityScanner:
         if not unpooled:
             return passed(_POOLING)
         others = f" and {len(unpooled) - 1} other files" if len(unpooled) > 1 else ""
-        return failed(
+        return flagged(
             _POOLING,
             ScanFinding(
                 category=CATEGORY,

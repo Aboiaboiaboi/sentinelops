@@ -62,7 +62,7 @@ from app.scanners.base import (
     ScanFinding,
     Severity,
     errored,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -172,7 +172,7 @@ def scan_iac(check: CheckSpec, repo: RepositoryIndex, has_iac_files: bool) -> Ch
     if not findings:
         return passed(check)
 
-    return failed(check, _finding(findings))
+    return flagged(check, _finding(findings))
 
 
 def _relevant_findings(report: dict, repo_mount: str) -> list[tuple[str, str, str]]:
@@ -205,7 +205,11 @@ def score_impact(findings: list[tuple[str, str, str]]) -> int:
 
 def _finding(findings: list[tuple[str, str, str]]) -> ScanFinding:
     check_id, name, path = findings[0]
-    others = f" It is one of {len(findings)} failed checks." if len(findings) > 1 else ""
+    others = (
+        f" It is one of {len(findings)} Checkov policies this project's Terraform does not pass."
+        if len(findings) > 1
+        else ""
+    )
 
     return ScanFinding(
         category="deployment",

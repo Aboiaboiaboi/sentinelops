@@ -16,7 +16,7 @@ from app.scanners.base import (
     RepositoryIndex,
     ScanFinding,
     Severity,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -120,7 +120,7 @@ class ObservabilityScanner:
 
         results: list[CheckResult] = []
 
-        results.append(passed(_LOGGING) if has_logging else failed(_LOGGING, self._no_logging()))
+        results.append(passed(_LOGGING) if has_logging else flagged(_LOGGING, self._no_logging()))
 
         if not has_logging:
             # "Unstructured" is not a meaningful complaint about a project that
@@ -131,14 +131,14 @@ class ObservabilityScanner:
         elif has_structured:
             results.append(passed(_STRUCTURED))
         else:
-            results.append(failed(_STRUCTURED, self._unstructured_logging()))
+            results.append(flagged(_STRUCTURED, self._unstructured_logging()))
 
         if not repo.is_service:
             results.append(skipped(_TELEMETRY, "only asked of something that serves traffic"))
         elif has_telemetry:
             results.append(passed(_TELEMETRY))
         else:
-            results.append(failed(_TELEMETRY, self._no_telemetry()))
+            results.append(flagged(_TELEMETRY, self._no_telemetry()))
 
         return results
 

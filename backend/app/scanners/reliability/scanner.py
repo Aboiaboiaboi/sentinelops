@@ -17,7 +17,7 @@ from app.scanners.base import (
     RepositoryIndex,
     ScanFinding,
     Severity,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -160,7 +160,7 @@ class ReliabilityScanner:
             return skipped(_HEALTH, "only asked of something that serves traffic")
         if has_health:
             return passed(_HEALTH)
-        return failed(
+        return flagged(
             _HEALTH,
             ScanFinding(
                 category=CATEGORY,
@@ -186,7 +186,7 @@ class ReliabilityScanner:
         if not untimed:
             return passed(_TIMEOUTS)
         others = f" and {len(untimed) - 1} other files" if len(untimed) > 1 else ""
-        return failed(
+        return flagged(
             _TIMEOUTS,
             ScanFinding(
                 category=CATEGORY,
@@ -212,7 +212,7 @@ class ReliabilityScanner:
             return skipped(_RETRIES, "no outbound calls were found to retry")
         if has_retries:
             return passed(_RETRIES)
-        return failed(
+        return flagged(
             _RETRIES,
             ScanFinding(
                 category=CATEGORY,
@@ -235,7 +235,7 @@ class ReliabilityScanner:
         if not swallowed:
             return passed(_SWALLOWED)
         others = f" and {len(swallowed) - 1} other files" if len(swallowed) > 1 else ""
-        return failed(
+        return flagged(
             _SWALLOWED,
             ScanFinding(
                 category=CATEGORY,

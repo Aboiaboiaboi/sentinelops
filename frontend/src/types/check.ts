@@ -6,11 +6,14 @@
  * endpoint" and "this is a CLI tool, the question does not apply" both looked
  * like silence.
  *
+ * `flagged` (not "failed") is the check that ran fine and found something —
+ * "failed" reads as "the tool broke", which is what `errored` means.
+ *
  * `errored` is ours, not the repository's: a tool that timed out or could not
  * be started established nothing, and saying "did not apply" would blame the
  * user's code for our failure.
  */
-export type CheckOutcome = 'passed' | 'failed' | 'skipped' | 'errored';
+export type CheckOutcome = 'passed' | 'flagged' | 'skipped' | 'errored';
 
 /** One check a scan performed. Shape of GET /scans/{id}/checks. */
 export interface CheckResult {

@@ -9,6 +9,82 @@ this file existed; the entries below cover the recent, meaningful ones —
 earlier history is in `git log` and the repository's own tags, not
 reconstructed here.
 
+## [0.76.0] — 2026-09-10
+
+### Changed
+- **The check outcome `failed` is now `flagged`.** A check that runs cleanly
+  and finds a problem was being reported with the same word people read as
+  "the tool broke" — which is what `errored` already means. `flagged` says
+  what actually happened: the scan worked, and it found something. Affects the
+  `CheckOutcome` enum, the API JSON for `GET /scans/{id}/checks` and
+  `/comparison`, the scan-checks summary in the UI, the PDF report, and the
+  marketing copy. `scan status` and `category status` are untouched — a scan
+  or a category genuinely can fail, and they keep the word.
+- Existing scans are migrated (`8bdaf64ccc50`): the `check_results` JSONB on
+  every stored scan has its `"failed"` outcomes rewritten to `"flagged"`. The
+  migration is reversible.
+
+## [0.75.0] — 2026-09-10
+
+### Changed
+- The frozen GCP Terraform moved from `deploy/*.tf` into `deploy/gcp/` and its
+  `.tf` files were renamed `.tf.frozen`, so Terraform, Checkov, and this
+  project's own deployment scanner all skip it — a reference implementation
+  that has not been the live deployment since 2026-08 should not read as live
+  infrastructure or generate findings against config nothing applies. `deploy/`
+  is now a three-way index (`aws/` live, `gcp/` frozen, `compose/` the app
+  layer). Reactivating the GCP path is a one-line rename, documented in
+  `deploy/gcp/README.md`.
+- Self-scan: Checkov now inspects only `deploy/aws/` — 13 findings instead of
+  32. The impact is unchanged (still the capped −3) and the score is still
+  94/100; the 19 findings against the retired GCP config are simply gone.
+
+## [0.74.0] — 2026-09-10
+
+### Changed
+- The authenticated app and the auth screens now follow the same theme as the
+  marketing pages, at a quieter register: mono uppercase section labels, the
+  honey-gold accent on score/grade/count figures, hairline dividers in place
+  of stacked boxed cards, and `font-display` page titles with tight tracking.
+  No oversized headings, drop caps, pull quotes or scroll animation — the app
+  stays a tool. Covers the login and signup screens, the app header and
+  footer, Dashboard / Project / Scan / Report, the 404, and every shared
+  component (findings, checks, the score gauge, the breakdown chart, scan
+  comparison, commit context, GitHub connection, project settings).
+- Primary buttons (`variant="default"`) now warm to the accent on hover —
+  honey-gold fill with near-black text (~10.9:1) — instead of a dimmed blue.
+  This is the one place the accent reaches an interactive control, and only
+  on hover; the resting state stays blue.
+- The app header's logo now links to `/home` everywhere (it linked to
+  `/dashboard` in the app shell and was unlinked on the auth screens); a
+  "Projects" nav link carries you back into the app.
+- `/how-it-works`: the isolation pull quote lost its lone decorative quote
+  mark and was reworded to a plainer line.
+- `/who-its-for`: the honey-gold drop cap on the lead paragraph was removed.
+
+### Fixed
+- The Report page printed the app header — logo, signed-in email, and a Sign
+  out button — onto the paper. The header and footer are now `print:hidden`,
+  and the print stylesheet's divider colour was darkened so the report's
+  hairline rules survive on white paper.
+
+## [0.73.0] — 2026-09-10
+
+### Changed
+- The public marketing pages (`/home`, `/how-it-works`, `/who-its-for`) were
+  restructured for editorial contrast: asymmetric grids in place of the
+  centred flex column that every section shared, oversized `clamp()`
+  headings with tight tracking, mono uppercase eyebrow labels, numbered
+  section dividers, a drop cap on the "who it's for" lead, and pull quotes
+  lifting one line per page out of the body text. Same dark palette, same
+  three fonts, same content and scroll animation.
+
+### Added
+- One editorial accent colour (`--editorial`, a honey-gold) used only for
+  emphasis — section numbers, eyebrows, quote marks, drop caps — never for
+  interactive controls, which stay blue so affordance is never ambiguous.
+  Verified at ~10.9:1 against the background.
+
 ## [0.72.0] — 2026-09-10
 
 ### Added

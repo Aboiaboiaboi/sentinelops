@@ -199,7 +199,7 @@ export function CategoryBreakdownChart({
               width={104}
               tickLine={false}
               axisLine={false}
-              tick={{ fontSize: 13, fill: 'var(--muted-foreground)' }}
+              tick={{ fontSize: 13, fill: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}
             />
             <Bar dataKey="value" radius={4} isAnimationActive={false}>
               {rows.map((row) => {
@@ -219,7 +219,7 @@ export function CategoryBreakdownChart({
       </div>
 
       {legend.length > 1 && (
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-1 text-xs text-muted-foreground">
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 pl-1 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-muted-foreground">
           {legend.map((entry) => (
             <LegendSwatch key={entry.status} status={entry.status}>
               {entry.label}
@@ -229,7 +229,7 @@ export function CategoryBreakdownChart({
       )}
 
       {hasIncomplete && (
-        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-4 border-t border-border/60 pt-3 text-xs leading-relaxed text-muted-foreground">
           Categories run in isolated sandboxes. One timing out or failing does not
           invalidate the rest — the score above covers only the categories that
           reported.

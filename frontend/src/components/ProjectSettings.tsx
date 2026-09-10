@@ -42,9 +42,9 @@ export function ProjectSettings({ project }: { project: Project }) {
   }
 
   return (
-    <Card className="w-full">
+    <Card className="w-full border-border/60 bg-card/60">
       <CardHeader>
-        <CardTitle className="text-base">Project settings</CardTitle>
+        <CardTitle className="font-display text-base tracking-tight">Project settings</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">

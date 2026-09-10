@@ -177,7 +177,7 @@ def test_a_manifest_with_nothing_wrong_is_a_pass(repo: RepositoryIndex) -> None:
 def test_a_vulnerability_fails_the_check(repo: RepositoryIndex) -> None:
     result, _ = _run(repo, stdout=_report(_vulnerability()))
 
-    assert result.outcome is CheckOutcome.FAILED
+    assert result.outcome is CheckOutcome.FLAGGED
     assert result.finding is not None
 
 

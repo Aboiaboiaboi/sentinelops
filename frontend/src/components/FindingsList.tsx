@@ -1,5 +1,5 @@
 import { FindingCard } from '@/components/FindingCard';
-import { Badge } from '@/components/ui/badge';
+import { SectionLabel } from '@/components/SectionLabel';
 import { categoryLabel } from '@/lib/categories';
 import { groupFindingsByCategory } from '@/lib/findings';
 import type { Finding } from '@/types/finding';
@@ -17,20 +17,26 @@ export function FindingsList({ findings }: { findings: Finding[] }) {
     <div className="space-y-6">
       {groups.map((group) => (
         <section key={group.category} aria-labelledby={`findings-${group.category}`}>
-          <div className="mb-2 flex items-baseline justify-between gap-2 border-b pb-1.5">
-            <h3 id={`findings-${group.category}`} className="text-sm font-medium">
-              {categoryLabel(group.category)}
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
+          <SectionLabel
+            as="h3"
+            id={`findings-${group.category}`}
+            count={
+              <span className="normal-case tracking-normal">
                 {group.findings.length}{' '}
                 {group.findings.length === 1 ? 'finding' : 'findings'}
               </span>
-            </h3>
-            {/* What this category cost, so the section header explains its own
-                share of the score rather than leaving the reader to add up. */}
-            <Badge variant="secondary" className="shrink-0 tabular-nums">
-              −{group.totalImpact}
-            </Badge>
-          </div>
+            }
+            trailing={
+              /* What this category cost, so the section header explains its
+                 own share of the score rather than leaving the reader to add
+                 up. */
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                −{group.totalImpact}
+              </span>
+            }
+          >
+            {categoryLabel(group.category)}
+          </SectionLabel>
 
           <div className="space-y-3">
             {group.findings.map((finding) => (

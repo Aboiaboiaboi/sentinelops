@@ -186,7 +186,7 @@ def test_scanned_with_no_matches_is_a_pass(repo: RepositoryIndex) -> None:
 def test_an_error_severity_match_fails_the_check(repo: RepositoryIndex) -> None:
     result, _ = _run(repo, stdout=_report(_match()))
 
-    assert result.outcome is CheckOutcome.FAILED
+    assert result.outcome is CheckOutcome.FLAGGED
     assert result.finding is not None
 
 

@@ -1,5 +1,4 @@
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { categoryLabel } from '@/lib/categories';
 import { cn } from '@/lib/utils';
@@ -25,7 +24,7 @@ function deltaClass(delta: number): string {
 function DeltaBadge({ delta }: { delta: number }) {
   const Icon = delta > 0 ? ArrowUp : delta < 0 ? ArrowDown : Minus;
   return (
-    <span className={cn('inline-flex items-center gap-1 tabular-nums', deltaClass(delta))}>
+    <span className={cn('inline-flex items-center gap-1 font-mono tabular-nums', deltaClass(delta))}>
       <Icon className="size-3.5" aria-hidden="true" />
       {signed(delta)}
     </span>
@@ -58,71 +57,74 @@ export function ScanComparison({ scanId, enabled }: { scanId: string; enabled: b
   // rendering a number that measures the wrong thing.
   if (!comparison.comparable) {
     return (
-      <Card>
-        <CardContent className="space-y-1 py-4">
-          <p className="text-sm font-medium">Not comparable with the previous scan</p>
-          <p className="text-sm text-muted-foreground">{comparison.reason}</p>
-        </CardContent>
-      </Card>
+      <div className="space-y-1 border-y border-border/60 py-4">
+        <p className="font-mono text-xs font-medium uppercase tracking-[0.15em] text-muted-foreground">
+          Not comparable with the previous scan
+        </p>
+        <p className="text-sm text-muted-foreground">{comparison.reason}</p>
+      </div>
     );
   }
 
   const moved = interesting(comparison.categories);
 
   return (
-    <Card>
-      <CardContent className="space-y-3 py-4">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-sm">
-            <span className="font-medium">Compared with {when}</span>
-            {comparison.previous_score !== null && (
-              <span className="text-muted-foreground"> · was {comparison.previous_score}/100</span>
-            )}
-          </p>
-          {comparison.score_delta !== null && (
-            <span className="text-sm font-medium">
-              <DeltaBadge delta={comparison.score_delta} />
+    <div className="space-y-3 border-y border-border/60 py-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-sm">
+          <span className="font-mono text-xs font-medium uppercase tracking-[0.15em] text-muted-foreground">
+            Compared with {when}
+          </span>
+          {comparison.previous_score !== null && (
+            <span className="text-muted-foreground">
+              {' '}
+              · was <span className="tabular-nums">{comparison.previous_score}</span>/100
             </span>
           )}
-        </div>
-
-        {comparison.score_delta === 0 && moved.length === 0 && (
-          <p className="text-sm text-muted-foreground">Nothing changed since the last scan.</p>
+        </p>
+        {comparison.score_delta !== null && (
+          <span className="text-sm font-medium">
+            <DeltaBadge delta={comparison.score_delta} />
+          </span>
         )}
+      </div>
 
-        {moved.length > 0 && (
-          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            {moved.map((category) => (
-              <li key={category.category} className="inline-flex items-center gap-1.5">
-                <span className="text-muted-foreground">{categoryLabel(category.category)}</span>
-                {category.delta === null ? (
-                  // Not a drop: the category stopped (or started) being
-                  // assessed, and showing minus its weight would accuse the
-                  // repository of a regression it did not have.
-                  <span className="text-muted-foreground">
-                    {category.current === null ? 'no longer assessed' : 'newly assessed'}
-                  </span>
-                ) : (
-                  <DeltaBadge delta={category.delta} />
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+      {comparison.score_delta === 0 && moved.length === 0 && (
+        <p className="text-sm text-muted-foreground">Nothing changed since the last scan.</p>
+      )}
 
-        {comparison.checks.length > 0 && (
-          <ul className="space-y-1 border-t pt-2 text-sm">
-            {comparison.checks.map((change) => (
-              <li key={change.id} className="flex flex-wrap items-baseline gap-x-2">
-                <span>{change.title}</span>
-                <span className="text-xs text-muted-foreground">
-                  {change.previous_outcome} → {change.current_outcome}
+      {moved.length > 0 && (
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {moved.map((category) => (
+            <li key={category.category} className="inline-flex items-center gap-1.5">
+              <span className="text-muted-foreground">{categoryLabel(category.category)}</span>
+              {category.delta === null ? (
+                // Not a drop: the category stopped (or started) being
+                // assessed, and showing minus its weight would accuse the
+                // repository of a regression it did not have.
+                <span className="text-muted-foreground">
+                  {category.current === null ? 'no longer assessed' : 'newly assessed'}
                 </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+              ) : (
+                <DeltaBadge delta={category.delta} />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {comparison.checks.length > 0 && (
+        <ul className="space-y-1 border-t border-border/60 pt-2 text-sm">
+          {comparison.checks.map((change) => (
+            <li key={change.id} className="flex flex-wrap items-baseline gap-x-2">
+              <span>{change.title}</span>
+              <span className="font-mono text-[0.6875rem] uppercase tracking-[0.12em] text-muted-foreground">
+                {change.previous_outcome} → {change.current_outcome}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

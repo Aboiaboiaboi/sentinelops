@@ -23,7 +23,7 @@ from app.scanners.base import (
     RepositoryIndex,
     ScanFinding,
     Severity,
-    failed,
+    flagged,
     passed,
     skipped,
 )
@@ -98,7 +98,7 @@ class ArchitectureScanner:
             return skipped(_TESTS, _NO_SOURCE)
         if test_files:
             return passed(_TESTS)
-        return failed(
+        return flagged(
             _TESTS,
             ScanFinding(
                 category=CATEGORY,
@@ -126,7 +126,7 @@ class ArchitectureScanner:
         ]
         if not unlocked:
             return passed(_LOCKFILE)
-        return failed(
+        return flagged(
             _LOCKFILE,
             ScanFinding(
                 category=CATEGORY,
@@ -162,7 +162,7 @@ class ArchitectureScanner:
         oversized.sort(key=lambda item: item[1], reverse=True)
         worst, worst_lines = oversized[0]
         others = f" and {len(oversized) - 1} other files" if len(oversized) > 1 else ""
-        return failed(
+        return flagged(
             _FILE_SIZE,
             ScanFinding(
                 category=CATEGORY,
@@ -190,7 +190,7 @@ class ArchitectureScanner:
 
         if at_root <= _MAX_ROOT_SOURCE_FILES or nested > at_root:
             return passed(_LAYOUT)
-        return failed(
+        return flagged(
             _LAYOUT,
             ScanFinding(
                 category=CATEGORY,
@@ -212,7 +212,7 @@ class ArchitectureScanner:
     def _check_readme(self, repo: RepositoryIndex) -> CheckResult:
         if repo.has_root_entry(*_README_NAMES):
             return passed(_README)
-        return failed(
+        return flagged(
             _README,
             ScanFinding(
                 category=CATEGORY,

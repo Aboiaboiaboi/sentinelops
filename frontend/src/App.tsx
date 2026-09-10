@@ -1,6 +1,7 @@
 import { lazy } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Link, Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout, AuthLayout } from '@/components/AppLayout';
+import { PageHeader } from '@/components/PageHeader';
 import { MarketingLayout } from '@/components/marketing/MarketingLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import DashboardPage from '@/pages/DashboardPage';
@@ -23,8 +24,20 @@ const WhoItsForPage = lazy(() => import('@/pages/WhoItsForPage'));
 
 function NotFound() {
   return (
-    <div className="py-16 text-center">
-      <h1 className="text-2xl font-semibold">Page not found</h1>
+    <div className="py-16">
+      <PageHeader
+        eyebrow="404"
+        caption={
+          <Link
+            to="/dashboard"
+            className="text-primary-bright underline-offset-4 hover:underline"
+          >
+            Back to projects
+          </Link>
+        }
+      >
+        Page not found
+      </PageHeader>
     </div>
   );
 }

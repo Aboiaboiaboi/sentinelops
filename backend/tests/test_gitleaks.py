@@ -163,7 +163,7 @@ def test_finding_leaks_is_not_signalled_as_an_error(repo: RepositoryIndex) -> No
 def test_leaks_are_reported_from_a_zero_exit(repo: RepositoryIndex) -> None:
     result, _ = _run(repo, stdout=json.dumps([_leak("aws-access-token", "conf.py")]), exit_code=0)
 
-    assert result.outcome is CheckOutcome.FAILED
+    assert result.outcome is CheckOutcome.FLAGGED
     assert result.finding is not None
 
 
@@ -202,7 +202,7 @@ def test_many_leaks_produce_one_finding(repo: RepositoryIndex) -> None:
 
     result, _ = _run(repo, stdout=json.dumps(report))
 
-    assert result.outcome is CheckOutcome.FAILED
+    assert result.outcome is CheckOutcome.FLAGGED
     assert "200 places" in result.finding.description
 
 
@@ -260,7 +260,7 @@ def test_a_leak_outside_tests_still_counts(repo: RepositoryIndex) -> None:
 
     result, _ = _run(repo, stdout=json.dumps(report))
 
-    assert result.outcome is CheckOutcome.FAILED
+    assert result.outcome is CheckOutcome.FLAGGED
     assert "backend/app/config.py" in result.finding.description
 
 
