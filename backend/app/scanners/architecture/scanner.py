@@ -6,10 +6,12 @@ parses source code — that would be a different and much larger project, and
 these checks already separate a repository somebody maintains from one somebody
 abandoned.
 
-The impacts sum to exactly this category's weight of 20, so a repository failing
-every check scores zero for architecture and no lower. They are not tuned to be
-individually precise; they are tuned so the ordering is defensible — no tests
-costs more than no README, because it should.
+The impacts sum to exactly this category's weight of 14 (SCORING_VERSION v3 —
+was 20, trimmed when the rubric was re-priced against production-readiness
+risk: these checks govern long-term maintainability, not whether the service
+survives real traffic, so they gave up weight to Deployment and Scalability).
+They are not tuned to be individually precise; they are tuned so the ordering
+is defensible — no tests costs more than no README, because it should.
 """
 
 from collections import Counter
@@ -38,12 +40,12 @@ _README = CheckSpec("architecture.readme", "README")
 # to measure — distinct from measuring it and finding it fine.
 _NO_SOURCE = "the repository has no hand-written source files"
 
-# Impacts, summing to the category weight of 20.
-_NO_TESTS = 8
-_NO_LOCKFILE = 4
-_OVERSIZED_FILE = 3
-_FLAT_LAYOUT = 3
-_NO_README = 2
+# Impacts, summing to the category weight of 14.
+_NO_TESTS = 7
+_NO_LOCKFILE = 3
+_OVERSIZED_FILE = 2
+_FLAT_LAYOUT = 1
+_NO_README = 1
 
 # Dependency manifest -> the lockfiles that would make its install reproducible.
 _LOCKFILES: dict[str, tuple[str, ...]] = {

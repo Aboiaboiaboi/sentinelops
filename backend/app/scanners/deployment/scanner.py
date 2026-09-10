@@ -7,8 +7,17 @@ The Dockerfile and Compose parsing this scanner drives lives in parsing.py,
 split out once this file passed the 600-line threshold architecture.file_size
 applies to everyone else — the checks below are what to do with a parse, not
 how to produce one.
+
+Two of the eight checks (`dockerfile_lint`, `iac_misconfiguration`) leave the
+process through `tools/` — Hadolint and Checkov — the same sandboxed-tool
+shape `security/scanner.py` already uses for Gitleaks/Trivy/Semgrep. See
+`tools/hadolint.py` and `tools/checkov.py` for why each exists rather than
+extending the six regex checks here, and for the exit-code and JSON-shape
+traps each one was measured against before being wired in.
 """
 
+import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from app.scanners.base import (
@@ -17,6 +26,7 @@ from app.scanners.base import (
     RepositoryIndex,
     ScanFinding,
     Severity,
+    errored,
     failed,
     passed,
     skipped,
@@ -29,10 +39,14 @@ from app.scanners.deployment.parsing import (
     is_dockerfile,
     is_orchestration,
     is_pinned,
+    is_terraform,
     parse_stages,
     runs_as_root,
     shell_form_entry,
 )
+from app.scanners.deployment.tools import checkov, hadolint
+
+logger = logging.getLogger(__name__)
 
 CATEGORY = "deployment"
 
@@ -44,28 +58,60 @@ _DOCKERIGNORE = CheckSpec("deployment.dockerignore", "Build context excluded")
 _SIGNALS = CheckSpec("deployment.signal_handling", "Container receives stop signals")
 _PRIVILEGED = CheckSpec("deployment.privileged", "Host isolation preserved")
 _CI = CheckSpec("deployment.ci", "CI pipeline")
+_DOCKERFILE_LINT = CheckSpec("deployment.dockerfile_lint", "Dockerfile lint findings")
+_IAC_MISCONFIGURATION = CheckSpec(
+    "deployment.iac_misconfiguration", "Infrastructure misconfiguration"
+)
 
 # The image checks read Dockerfile stages, so without one there is nothing to
 # read — a repository whose image is built elsewhere is not failing them.
 _NO_DOCKERFILE = "no Dockerfile was found to inspect"
 
-# Impacts. Both paths through the checks below total the category weight of 15:
-# a repository with no deployment config at all loses 12 + 3, and one with a
-# Dockerfile and orchestration can lose 3 + 4 + 1 + 3 + 1 + 2 + 1.
+# Impacts. Both paths through the checks below total the category weight of 17
+# (SCORING_VERSION v3 — was 15; +2 came with these two tool checks, priced as
+# breach-tier since a public bucket or an open security group is exploitable
+# the moment it's applied): a repository with no deployment config at all
+# loses 14 + 3, and one with a Dockerfile and orchestration can lose
+# 2 + 3 + 1 + 1 + 1 + 2 + 3 + hadolint.BUDGET + checkov.BUDGET.
 #
-# Rebalanced when the signal-handling and privileged checks were added. The
-# weight has to come from somewhere, and it came from the two findings about
-# what ends up in the image rather than from the two about reproducibility and
-# privilege — a wedged container and a fat layer are both recoverable, and
-# neither is somebody owning the host.
-_NO_DEPLOYMENT_CONFIG = 12
-_UNPINNED_BASE_IMAGE = 3
-_RUNS_AS_ROOT = 4
+# Rebalanced when the signal-handling and privileged checks were added, and
+# again when Hadolint and Checkov were. The weight has to come from somewhere
+# each time, and it keeps coming from the two findings about what ends up in
+# the image rather than from the two about reproducibility and privilege — a
+# wedged container and a fat layer are both recoverable, and neither is
+# somebody owning the host.
+_NO_DEPLOYMENT_CONFIG = 14
+_UNPINNED_BASE_IMAGE = 2
+_RUNS_AS_ROOT = 3
 _NO_HEALTHCHECK = 1
 _NO_CI_PIPELINE = 3
 _NO_DOCKERIGNORE = 1
 _PRIVILEGED_CONTAINER = 2
 _SHELL_FORM_ENTRYPOINT = 1
+_DOCKERFILE_LINT_FINDING = hadolint.BUDGET  # 1
+_IAC_MISCONFIGURATION_FOUND = checkov.BUDGET  # 3
+
+CATEGORY_BUDGET = 17
+
+# Checked at import rather than trusted, the same way security's tool budget
+# is. Both scoring paths below must equal the category weight exactly — one
+# that summed to less would let a repository dodge points it should lose, one
+# that summed to more would let it lose more than the category is worth.
+assert _NO_DEPLOYMENT_CONFIG + _NO_CI_PIPELINE == CATEGORY_BUDGET, (
+    "deployment's no-config path must sum to the category weight"
+)
+assert (
+    _UNPINNED_BASE_IMAGE
+    + _RUNS_AS_ROOT
+    + _NO_HEALTHCHECK
+    + _NO_DOCKERIGNORE
+    + _SHELL_FORM_ENTRYPOINT
+    + _PRIVILEGED_CONTAINER
+    + _NO_CI_PIPELINE
+    + _DOCKERFILE_LINT_FINDING
+    + _IAC_MISCONFIGURATION_FOUND
+    == CATEGORY_BUDGET
+), "deployment's with-config path must sum to the category weight"
 
 # Only these get read for the privilege check. A directory can be recognised as
 # orchestration because of a README sitting in it; a manifest is YAML.
@@ -97,7 +143,18 @@ _CI_ROOT_FILES = (
 
 class DeploymentScanner:
     category = CATEGORY
-    CHECKS = (_CONFIG, _PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE, _SIGNALS, _PRIVILEGED, _CI)
+    CHECKS = (
+        _CONFIG,
+        _PINNING,
+        _NON_ROOT,
+        _HEALTHCHECK,
+        _DOCKERIGNORE,
+        _SIGNALS,
+        _PRIVILEGED,
+        _CI,
+        _DOCKERFILE_LINT,
+        _IAC_MISCONFIGURATION,
+    )
 
     def scan(self, repo: RepositoryIndex) -> list[CheckResult]:
         # Both questions answered in one pass over the already-built index.
@@ -107,6 +164,7 @@ class DeploymentScanner:
         dockerfiles: list[Path] = []
         compose_files: list[Path] = []
         manifest_files: list[Path] = []
+        terraform_files: list[Path] = []
         has_orchestration = False
         for path in repo.files:
             if is_dockerfile(path):
@@ -114,6 +172,13 @@ class DeploymentScanner:
                 continue
             if path.name.lower() in COMPOSE_NAMES:
                 compose_files.append(path)
+                has_orchestration = True
+                continue
+            if is_terraform(path):
+                # Own list, not folded into manifest_files (those are read for
+                # the privilege check; Terraform's own misconfigurations are
+                # Checkov's job below, not host_access()'s).
+                terraform_files.append(path)
                 has_orchestration = True
                 continue
             # No longer short-circuited once orchestration is found: the
@@ -128,26 +193,64 @@ class DeploymentScanner:
                 ):
                     manifest_files.append(path)
 
-        results: list[CheckResult] = []
-        if not dockerfiles and not has_orchestration:
-            results.append(failed(_CONFIG, self._no_deployment_config()))
-            # Nothing describes the deployment, so there is nothing to inspect
-            # for pinning, privileges or build context. Reporting those as
-            # passed would credit a repository for a file it does not have.
-            no_config = "no deployment configuration was found to inspect"
-            results.extend(
-                skipped(check, no_config)
-                for check in (_PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE, _SIGNALS)
+        # The two sandboxed tools are started first and collected last, so
+        # their containers run while the regex checks below read the tree —
+        # the same overlap security/scanner.py gets from doing this with its
+        # three tools. Each needs its own extra argument beyond (check, repo)
+        # — the discovered Dockerfile paths, and whether any Terraform exists
+        # — so this is submitted directly rather than through a flat
+        # (check, callable) table the way security's three tools are; the
+        # shape of what each tool needs differs enough that forcing a common
+        # signature would cost more than it would document.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="deployment-tool") as pool:
+            lint_future = pool.submit(
+                hadolint.scan_dockerfiles, _DOCKERFILE_LINT, repo, dockerfiles
             )
-        else:
-            results.append(passed(_CONFIG))
-            results.extend(self._check_images(dockerfiles, compose_files, repo))
+            iac_future = pool.submit(
+                checkov.scan_iac, _IAC_MISCONFIGURATION, repo, bool(terraform_files)
+            )
 
-        # Outside the branch: it reads orchestration rather than the image, and
-        # it answers for itself when there is none.
-        results.append(self._check_privileged(compose_files, manifest_files, repo))
-        results.append(self._check_ci(repo))
+            results: list[CheckResult] = []
+            if not dockerfiles and not has_orchestration:
+                results.append(failed(_CONFIG, self._no_deployment_config()))
+                # Nothing describes the deployment, so there is nothing to
+                # inspect for pinning, privileges or build context. Reporting
+                # those as passed would credit a repository for a file it
+                # does not have.
+                no_config = "no deployment configuration was found to inspect"
+                results.extend(
+                    skipped(check, no_config)
+                    for check in (_PINNING, _NON_ROOT, _HEALTHCHECK, _DOCKERIGNORE, _SIGNALS)
+                )
+            else:
+                results.append(passed(_CONFIG))
+                results.extend(self._check_images(dockerfiles, compose_files, repo))
+
+            # Outside the branch: it reads orchestration rather than the
+            # image, and it answers for itself when there is none.
+            results.append(self._check_privileged(compose_files, manifest_files, repo))
+            results.append(self._check_ci(repo))
+
+            results.append(self._collect(_DOCKERFILE_LINT, lint_future))
+            results.append(self._collect(_IAC_MISCONFIGURATION, iac_future))
+
         return results
+
+    @staticmethod
+    def _collect(check: CheckSpec, future: "Future[CheckResult]") -> CheckResult:
+        """One tool's result, or an errored check if it raised.
+
+        Same purpose as security/scanner.py's identical method: every
+        anticipated failure is already an errored result by the time it gets
+        here, so this only catches the unanticipated — without it, one tool
+        raising would cost the category its other nine checks instead of just
+        this one.
+        """
+        try:
+            return future.result()
+        except Exception:
+            logger.exception("deployment tool raised", extra={"check": check.id})
+            return errored(check, "the check could not be completed")
 
     def _no_deployment_config(self) -> ScanFinding:
         return ScanFinding(

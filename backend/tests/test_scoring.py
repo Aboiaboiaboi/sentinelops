@@ -49,10 +49,10 @@ class TestWeights:
         assert CATEGORY_WEIGHTS == {
             "security": 25,
             "reliability": 20,
-            "architecture": 20,
-            "deployment": 15,
+            "architecture": 14,
+            "deployment": 17,
             "observability": 10,
-            "scalability": 10,
+            "scalability": 14,
         }
 
     def test_unknown_category_has_no_weight(self) -> None:
@@ -119,7 +119,7 @@ class TestScoreScan:
         that category had passed."""
         status = {c: "completed" for c in SCAN_CATEGORIES if c != "scalability"}
 
-        assert score_scan([], status) == MAX_SCORE - 10
+        assert score_scan([], status) == MAX_SCORE - 14
 
     @pytest.mark.parametrize("status", ["completed", "failed", "pending"])
     def test_score_is_always_within_range(self, status: str) -> None:
@@ -147,7 +147,7 @@ class TestScoreByCategory:
     def test_deductions_apply_to_the_right_category(self) -> None:
         scores = score_by_category([_finding("architecture", 3)], _all("completed"))
 
-        assert scores["architecture"] == 17
+        assert scores["architecture"] == 11
         assert scores["security"] == 25
 
     def test_omits_categories_that_did_not_report(self) -> None:
@@ -155,7 +155,7 @@ class TestScoreByCategory:
         rather than "not assessed"."""
         status = _all("failed") | {"architecture": "completed"}
 
-        assert score_by_category([], status) == {"architecture": 20}
+        assert score_by_category([], status) == {"architecture": 14}
 
     def test_totals_match_score_scan(self) -> None:
         """The two must never disagree — the chart is drawn from one and the
@@ -171,5 +171,7 @@ class TestScoringVersion:
         """Pinned deliberately. Changing the rubric without changing this string
         makes every old score silently incomparable to every new one, and
         comparison has no way to know it should decline. v2 re-cut security's 25
-        points across eight checks when the real tools replaced the regexes."""
-        assert SCORING_VERSION == "v2"
+        points across eight checks when the real tools replaced the regexes; v3
+        re-priced the category weights themselves against production-readiness
+        risk when Hadolint and Checkov were added."""
+        assert SCORING_VERSION == "v3"

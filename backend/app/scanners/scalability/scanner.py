@@ -38,12 +38,15 @@ _POOLING = CheckSpec("scalability.connection_pooling", "Database connection pool
 # behave correctly — so a non-service skips all three for one reason.
 _NOT_A_SERVICE = "only asked of something that serves traffic behind a load balancer"
 
-# Impacts, summing to the category weight of 10. In-memory state is worth more
-# than the other two together because it is the only one that makes a second
-# copy actively wrong rather than merely wasteful.
-_IN_MEMORY_STATE = 4
-_LOCAL_FILE_STORAGE = 3
-_CONNECTION_PER_REQUEST = 3
+# Impacts, summing to the category weight of 14 (SCORING_VERSION v3 — was 10,
+# raised when the rubric was re-priced: at real concurrency a second instance
+# is not optional, and these three checks are what decide whether running one
+# is even possible). In-memory state is worth more than the other two together
+# because it is the only one that makes a second copy actively wrong rather
+# than merely wasteful.
+_IN_MEMORY_STATE = 6
+_LOCAL_FILE_STORAGE = 4
+_CONNECTION_PER_REQUEST = 4
 
 
 # --- Session state ---------------------------------------------------------

@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 const GOOD_FIT = [
   { thing: 'A product or SaaS API before launch', why: 'Every check applies, and 100 is genuinely reachable' },
   { thing: 'Internal tools and admin dashboards', why: 'Usually the worst offenders, because "it’s only internal"' },
-  { thing: 'A codebase you’ve just inherited', why: '31 concrete answers beats a week of reading unfamiliar code' },
+  { thing: 'A codebase you’ve just inherited', why: '33 concrete answers beats a week of reading unfamiliar code' },
   { thing: 'One repo, scanned repeatedly over time', why: 'Watching the score move matters more than any single number' },
 ];
 

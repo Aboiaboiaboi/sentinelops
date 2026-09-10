@@ -56,7 +56,7 @@ class TestHealthyRepository:
         for index in range(20):
             (tmp_path / f"mod{index}.py").write_text("x\n" * 700, encoding="utf-8")
 
-        assert sum(f.score_impact for f in _scan(tmp_path)) <= 20
+        assert sum(f.score_impact for f in _scan(tmp_path)) <= 14
 
 
 class TestTests:

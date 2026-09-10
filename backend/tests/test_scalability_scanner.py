@@ -76,7 +76,7 @@ class TestHealthyRepository:
             "const c = new pg.Client();\n",
         )
 
-        assert sum(f.score_impact for f in _scan(tmp_path)) <= 10
+        assert sum(f.score_impact for f in _scan(tmp_path)) <= 14
 
 
 class TestOnlyAppliesToServices:

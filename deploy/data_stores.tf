@@ -125,5 +125,6 @@ resource "google_artifact_registry_repository" "images" {
   # authentication problem a credential solves, the registry simply is not
   # accepted. GHCR stays the public, portable copy; this is the one Cloud Run
   # deploys from. The security tool images (Gitleaks, Trivy, Semgrep) have to be
-  # mirrored here too before the sandbox can run them, for the same reason.
+  # mirrored here too before the sandbox can run them, for the same reason —
+  # since joined by Hadolint and Checkov, the deployment scanner's own tools.
 }

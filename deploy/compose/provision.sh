@@ -101,6 +101,19 @@ if [ -n "$MISSING" ]; then
     exit 1
 fi
 
+echo "==> Pre-pulling the sandboxed tool images"
+# Every other sandboxed tool image pulls implicitly on first use, inside its
+# own scan timeout — fine for the small ones (Gitleaks, Trivy, Semgrep are all
+# already covered by the warm-* cache-population step below, which pulls them
+# as a side effect). Checkov's image is ~170MB and has no warm step of its
+# own (its policy library ships inside the image — nothing to cache), so
+# without this a fresh box's first real deployment scan could spend a large
+# chunk of its 120s timeout just downloading the image, measured at ~50s on a
+# clean pull. Hadolint is tiny and would be fine either way; pulled here too
+# for symmetry, so "the tool images are ready" is one step, not three.
+docker pull hadolint/hadolint:v2.12.0-alpine
+docker pull bridgecrew/checkov:3.2.334
+
 echo "==> Building and starting the stack"
 # warm-trivy and warm-semgrep are one-shot services in the compose file
 # itself — `up` already starts, runs and exits them once, populating the

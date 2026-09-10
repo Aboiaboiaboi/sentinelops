@@ -54,9 +54,11 @@ async def on_startup(ctx: dict[str, Any]) -> None:
         logger.error("sandbox unusable, tool checks will report errored", extra={"reason": reason})
         return
 
-    # A missing cache is a warning, not a refusal. Gitleaks needs no cache and
-    # runs regardless; only the Trivy and Semgrep checks report errored, which
-    # is the honest answer while the warm services are still downloading.
+    # A missing cache is a warning, not a refusal. Gitleaks, Hadolint and
+    # Checkov need no cache and run regardless — Checkov's policy library
+    # ships inside its image, and Hadolint has no external data at all; only
+    # the Trivy and Semgrep checks report errored, which is the honest answer
+    # while the warm services are still downloading.
     cache = settings.sandbox_cache_volume
     if cache and not await asyncio.to_thread(sandbox.volume_exists, cache):
         logger.warning(

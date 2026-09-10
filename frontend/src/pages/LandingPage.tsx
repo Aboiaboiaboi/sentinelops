@@ -10,11 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
  * mockup: this is what running SentinelOps against SentinelOps returns. */
 const CATEGORY_SCORES = [
   { name: 'Security', score: 25, max: 25 },
-  { name: 'Architecture', score: 20, max: 20 },
   { name: 'Reliability', score: 20, max: 20 },
-  { name: 'Scalability', score: 10, max: 10 },
+  { name: 'Deployment', score: 11, max: 17 },
+  { name: 'Architecture', score: 14, max: 14 },
+  { name: 'Scalability', score: 14, max: 14 },
   { name: 'Observability', score: 10, max: 10 },
-  { name: 'Deployment', score: 13, max: 15 },
 ];
 
 const FEATURES = [
@@ -22,13 +22,13 @@ const FEATURES = [
     icon: ShieldCheck,
     title: 'Real tools, not guesswork',
     description:
-      'Gitleaks, Trivy, and Semgrep — the same security tools teams use in production — run inside isolated sandboxes with no network access, not a pile of regexes pretending to be a scanner.',
+      'Gitleaks, Trivy, Semgrep, Hadolint, and Checkov — the same tools teams use in production — run inside isolated sandboxes with no network access, not a pile of regexes pretending to be a scanner.',
   },
   {
     icon: FileSearch,
     title: 'Shows its work',
     description:
-      'Every one of the 31 checks reports passed, failed, skipped, or errored — with a reason. A category at full marks tells you what it verified, not just that it found nothing to complain about.',
+      'Every one of the 33 checks reports passed, failed, skipped, or errored — with a reason. A category at full marks tells you what it verified, not just that it found nothing to complain about.',
   },
   {
     icon: Boxes,
@@ -49,7 +49,7 @@ export default function LandingPage() {
             Know what&rsquo;s wrong before you ship.
           </h1>
           <p className="max-w-xl text-balance text-lg text-muted-foreground">
-            Point SentinelOps at a repository. It clones it, runs 31 checks
+            Point SentinelOps at a repository. It clones it, runs 33 checks
             across six categories, and hands back a score out of 100 with
             exactly what to fix.
           </p>
@@ -73,7 +73,7 @@ export default function LandingPage() {
               <div className="mb-4 flex items-center justify-between">
                 <span className="text-muted-foreground">sentinelops --self-scan</span>
                 <span className="rounded bg-primary-bright/10 px-2 py-0.5 text-primary-bright">
-                  98 / 100 &middot; Grade A
+                  94 / 100 &middot; Grade A
                 </span>
               </div>
               <div className="space-y-2">
@@ -124,13 +124,13 @@ export default function LandingPage() {
         >
           <div>
             <div className="font-mono text-3xl font-medium text-primary-bright sm:text-4xl">
-              <StatCounter value={98} suffix="/100" />
+              <StatCounter value={94} suffix="/100" />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">Self-scan score</p>
           </div>
           <div>
             <div className="font-mono text-3xl font-medium text-primary-bright sm:text-4xl">
-              <StatCounter value={31} />
+              <StatCounter value={33} />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">Checks run</p>
           </div>
@@ -142,9 +142,9 @@ export default function LandingPage() {
           </div>
           <div>
             <div className="font-mono text-3xl font-medium text-primary-bright sm:text-4xl">
-              <StatCounter value={3} />
+              <StatCounter value={5} />
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">Sandboxed security tools</p>
+            <p className="mt-1 text-sm text-muted-foreground">Sandboxed tools</p>
           </div>
         </Reveal>
       </section>

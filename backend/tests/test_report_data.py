@@ -105,11 +105,11 @@ class TestCleanScan:
 
         assert [row.category for row in report.categories] == [
             "security",
-            "architecture",
             "reliability",
             "deployment",
-            "observability",
+            "architecture",
             "scalability",
+            "observability",
         ]
 
     def test_no_findings_means_no_groups(self) -> None:

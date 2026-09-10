@@ -30,18 +30,29 @@ from app.scanners.base import ScanFinding
 #
 # v2: security's 25 points were re-cut across eight checks when Gitleaks, Trivy
 # and Semgrep replaced part of the regex baseline. The category weights below
-# did not move; what a security finding costs did. Comparison correctly refuses
-# to show a delta across this boundary — the difference would measure a change
-# in SentinelOps, not in the repository.
-SCORING_VERSION = "v2"
+# did not move; what a security finding costs did.
+#
+# v3: the category weights themselves moved, re-priced against what actually
+# breaks a SaaS running at real concurrency rather than what is easy to check.
+# Deployment 15->17 (it now carries Terraform/IaC misconfiguration via Checkov,
+# which is breach-tier, not hygiene-tier). Scalability 10->14 (in-memory state
+# or local-disk uploads mean a second instance is impossible, and at real
+# concurrency you need one). Architecture 20->14 (file size, module layout and
+# a README govern long-term velocity, not whether the service survives
+# Tuesday — the most overpriced category for production readiness
+# specifically). Security and Reliability were already correctly priced and
+# did not move. Comparison correctly refuses to show a delta across either
+# boundary — the difference would measure a change in SentinelOps, not in the
+# repository.
+SCORING_VERSION = "v3"
 
 CATEGORY_WEIGHTS: Mapping[str, int] = {
     "security": 25,
     "reliability": 20,
-    "architecture": 20,
-    "deployment": 15,
+    "architecture": 14,
+    "deployment": 17,
     "observability": 10,
-    "scalability": 10,
+    "scalability": 14,
 }
 
 MAX_SCORE = 100

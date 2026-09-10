@@ -103,16 +103,29 @@ def is_dockerfile(path: Path) -> bool:
 
 
 def is_orchestration(path: Path, root: Path) -> bool:
-    """Compose, a Kubernetes layout, or a Helm chart.
+    """Compose, a Kubernetes layout, a Helm chart, or Terraform.
 
     A repository can legitimately have no Dockerfile — the image may be built
-    elsewhere — while still describing how it is deployed.
+    elsewhere — while still describing how it is deployed. Terraform files are
+    recognised by suffix rather than directory, unlike Compose/Kubernetes:
+    there is no ambiguity to guard against the way `image:` has with a `build:`
+    key, so the cheaper check is also the correct one. This was a real gap —
+    a repository deployed purely via Terraform used to be scored as having no
+    deployment configuration at all and lose the full config penalty.
     """
     name = path.name.lower()
     if name in COMPOSE_NAMES or name == "chart.yaml":
         return True
+    if is_terraform(path):
+        return True
     relative = path.relative_to(root)
     return any(part.lower() in _ORCHESTRATION_DIRECTORIES for part in relative.parts[:-1])
+
+
+def is_terraform(path: Path) -> bool:
+    """`.tf` or `.tf.json` — Terraform's own two source formats."""
+    name = path.name.lower()
+    return name.endswith(".tf") or name.endswith(".tf.json")
 
 
 def compose_unpinned_images(content: str) -> list[str]:

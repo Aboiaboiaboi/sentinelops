@@ -11,6 +11,7 @@ import pytest
 
 from app.scanners.base import RepositoryIndex, Severity, findings_of
 from app.scanners.deployment import DeploymentScanner
+from app.scanners.deployment.scanner import CATEGORY_BUDGET
 
 SCANNER = DeploymentScanner()
 
@@ -63,12 +64,12 @@ class TestHealthyRepository:
         """A repository failing everything scores the category zero, not below."""
         _write(tmp_path, "Dockerfile", 'FROM python\nCMD ["python"]\n')
 
-        assert sum(f.score_impact for f in _scan(tmp_path)) <= 15
+        assert sum(f.score_impact for f in _scan(tmp_path)) <= CATEGORY_BUDGET
 
     def test_the_worst_case_with_no_config_also_fits(self, tmp_path: Path) -> None:
         _write(tmp_path, "README.md", "# docs\n")
 
-        assert sum(f.score_impact for f in _scan(tmp_path)) <= 15
+        assert sum(f.score_impact for f in _scan(tmp_path)) <= CATEGORY_BUDGET
 
 
 class TestDeploymentConfig:

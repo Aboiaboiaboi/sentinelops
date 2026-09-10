@@ -252,8 +252,11 @@ class TestExecuteScan:
         """Concrete numbers rather than derived ones, so an accidental change to
         any weight or impact fails here.
 
-        The fixture repo has no README and no tests, so architecture loses 10 of
-        its 20. No Dockerfile and no CI, so deployment loses all 15.
+        The fixture repo has no README and no tests, so architecture loses 8 of
+        its 14. No Dockerfile and no CI, so deployment loses all 17 — the two
+        new tool checks (Hadolint, Checkov) contribute nothing on top of that,
+        since NullSandbox is the default here and both report themselves
+        skipped/errored, never a finding, with nothing to run against.
         Observability loses 6 of 10 for having no logging — the other two
         observability checks are service-only and it is detected as plain
         Python. Reliability scores full marks for the same reason: no health
@@ -263,9 +266,9 @@ class TestExecuteScan:
         Scalability contributes **nothing**, and that is the interesting
         number here: all three of its checks are service-only, so on a library
         every one is skipped and the category assessed nothing at all. Paying
-        it the full 10 for work nobody did was the same mistake as scoring an
-        empty repository 77 — visible only once checks reported their outcomes
-        individually.
+        it the full weight for work nobody did was the same mistake as scoring
+        an empty repository 77 — visible only once checks reported their
+        outcomes individually.
 
         Security scores clean: no credential files, no secrets, no debug flag,
         no TLS overrides, and enough checks really ran for the category to have
@@ -276,8 +279,8 @@ class TestExecuteScan:
         await execute_scan(session, scan_id=scan.id)
 
         finished = await reload_scan(session, scan.id)
-        assert finished.score == 59
-        assert finished.scoring_version == "v2"
+        assert finished.score == 55
+        assert finished.scoring_version == "v3"
 
     async def test_records_what_each_category_scored(
         self, session: AsyncSession, scan_of: tuple[Scan, Project]
@@ -294,7 +297,7 @@ class TestExecuteScan:
         # reported a score.
         assert finished.category_scores == {
             "security": 25,
-            "architecture": 10,
+            "architecture": 6,
             "deployment": 0,
             "reliability": 20,
             "observability": 4,

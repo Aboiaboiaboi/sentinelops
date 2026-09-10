@@ -6,10 +6,11 @@ start a container directly. That boundary is what keeps the security tooling
 portable: Docker locally today, Cloud Run Jobs once there is somewhere to
 deploy to, and a change here rather than in every tool wrapper.
 
-This exists because the security scanners are the first thing in SentinelOps
+This exists because the security scanners were the first thing in SentinelOps
 that *executes* third-party binaries against an untrusted, user-submitted
-repository. Reading files is one risk; handing that tree to Gitleaks, Trivy and
-Semgrep — each a large program with its own parsers — is another, and the
+repository — since joined by the deployment scanner's own tools. Reading files
+is one risk; handing that tree to Gitleaks, Trivy, Semgrep, Hadolint and
+Checkov — each a large program with its own parsers — is another, and the
 containment for it belongs in one reviewable place.
 
 Two implementations: `DockerSandbox` for real use, and `NullSandbox`, which is
@@ -45,9 +46,10 @@ REPO_PLACEHOLDER = "{repo}"
 CACHE_MOUNT = "/cache"
 
 # Enough scratch space for a tool that insists on a temp file, and no more. The
-# root filesystem is read-only, so without this Trivy and Semgrep fail on their
-# first write; with an unbounded tmpfs a hostile repository could fill the
-# worker's memory, since tmpfs pages are charged to it.
+# root filesystem is read-only, so without this any tool that writes to /tmp —
+# Trivy and Semgrep on their first write, Checkov for its HOME — fails outright;
+# with an unbounded tmpfs a hostile repository could fill the worker's memory,
+# since tmpfs pages are charged to it.
 TMPFS_BYTES = 256 * 1024 * 1024
 
 # The nobody:nogroup ids. Present in every mainstream base image, and owning

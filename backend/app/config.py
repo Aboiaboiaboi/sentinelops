@@ -107,18 +107,24 @@ class Settings(BaseSettings):
     # How many tool containers this worker may run at once, across every scan it
     # is handling. Without it the real ceiling is max_jobs × tools-per-scanner,
     # a number set in two files that neither one states — five scans running
-    # three tools each is fifteen containers, and at the limit above that is
-    # more memory than a developer's Docker VM has.
+    # five tools each (three security, two deployment, since Hadolint and
+    # Checkov joined Gitleaks/Trivy/Semgrep) is twenty-five containers, and at
+    # the limit above that is more memory than a developer's Docker VM has.
     #
-    # Six is two scans' worth of tools, and it is affordable because measurement
-    # said so: peaks are Semgrep 271 MiB, Gitleaks 58, Trivy 39, so six
-    # containers cost well under a gigabyte in practice against the 3 GB their
-    # limits allow. A limit is not a reservation.
+    # Six is well under even one scan's worth of tools now, and it is
+    # affordable because measurement said so: peaks are Semgrep 271 MiB,
+    # Gitleaks 58, Trivy 39, Checkov 156, Hadolint too fast to catch on a
+    # sampling profiler (a tiny statically-linked binary, comfortably under
+    # 50 MiB) — six containers cost well under a gigabyte in practice against
+    # the 3 GB their limits allow. A limit is not a reservation.
     #
     # Queueing past this is cheap rather than dangerous. On a 2,500-file
-    # repository the three tools cost ~34 container-seconds together, so even
-    # five scans contending for these slots wait tens of seconds against the
-    # 300s ceiling in _slot. Raising it buys throughput, not correctness.
+    # repository the three security tools cost ~34 container-seconds
+    # together; the two deployment tools are lighter still — measured under
+    # 1s (Hadolint) and ~3s (Checkov) against this project's own real
+    # Dockerfile and Terraform — so even five scans contending for these
+    # slots wait tens of seconds against the 300s ceiling in _slot. Raising
+    # it buys throughput, not correctness.
     sandbox_max_concurrent: int = 6
 
     # Only consulted when the browser talks to the API cross-origin. Local dev

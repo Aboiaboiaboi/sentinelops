@@ -475,7 +475,8 @@ class RepositoryIndex:
     _cache: dict[Path, str] = field(default_factory=dict, repr=False)
     _cached_bytes: int = field(default=0, repr=False)
     # One index is now shared by threads: the security scanner runs its three
-    # tools concurrently and every one of them is handed this object. The dict
+    # tools concurrently, the deployment scanner runs two more, and every one
+    # of them is handed this object. The dict
     # itself is fine under the GIL, but `_cached_bytes += len(content)` is a
     # read-modify-write, and two threads interleaving there lose an update and
     # let the cache grow past its budget. compare=False because a lock is not

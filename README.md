@@ -4,7 +4,7 @@
 
 **Is this application ready for production?**
 
-Point SentinelOps at a Git repository. It clones it, checks it against 31
+Point SentinelOps at a Git repository. It clones it, checks it against 33
 things that commonly go wrong before launch, and gives you a score out of 100
 with specific findings — what's wrong, why it matters, and what to do about
 it. It also shows which commit it looked at, what changed since the last
@@ -131,19 +131,21 @@ You give it a repository URL. A few seconds later you get something like
 this — a real scan of **this repository, run just now**, not a mockup:
 
 ```
-sentinelops                                        98 / 100    Grade A
+sentinelops                                        94 / 100    Grade A
 6 of 6 categories reported
-31 checks: 26 passed · 4 skipped · 1 failed
+33 checks: 26 passed · 4 skipped · 3 failed
 
   Security         25 / 25   ████████████████████
-  Architecture     20 / 20   ████████████████████
   Reliability      20 / 20   ████████████████████
-  Scalability      10 / 10   ████████████████████
+  Architecture     14 / 14   ████████████████████
+  Scalability      14 / 14   ████████████████████
   Observability    10 / 10   ████████████████████
-  Deployment       13 / 15   █████████████████░░░
+  Deployment       11 / 17   █████████████░░░░░░░
 ```
 
-One finding, and it's deliberate rather than overlooked:
+Three findings. One is deliberate rather than overlooked; the other two are
+real issues the two newest checks — Hadolint and Checkov — actually found in
+this project's own Dockerfile and Terraform:
 
 > **Container granted host-level access** · HIGH · −2
 > `docker-compose.yml` mounts the Docker socket into a container, which is
@@ -156,12 +158,25 @@ One finding, and it's deliberate rather than overlooked:
 > container genuinely needs it, grant only the specific permission it needs
 > instead of full access.
 
-It's left on the scoreboard on purpose — it's a real trade-off, not a bug, and
-the finding exists to make sure it never quietly ends up somewhere it
-shouldn't.
+> **Infrastructure misconfiguration found** · HIGH · −3
+> `deploy/aws/ci.tf` — one of 32 checks Checkov failed against this
+> project's real Terraform, starting with access that should go through SSO
+> rather than an IAM user. A property of the infrastructure itself, not the
+> application code.
+
+> **Dockerfile lint findings** · LOW · −1
+> `backend/Dockerfile` installs an apt package without pinning its version —
+> caught by Hadolint, which checks layer hygiene a structural Dockerfile
+> parse doesn't.
+
+The first is left on the scoreboard on purpose — a real trade-off, not a
+bug, and the finding exists to make sure it never quietly ends up somewhere
+it shouldn't. The other two are exactly what these two tools were added to
+catch, and they're both real — left unfixed here on purpose, as the honest
+current state rather than a score tidied up after the fact.
 
 Every scan can also be downloaded as a PDF with the same score, breakdown,
-findings, and all 31 checks (including the ones skipped, and why).
+findings, and all 33 checks (including the ones skipped, and why).
 
 It only **reads** the code. It never runs the repository, deploys it, or
 changes anything in it.
@@ -186,7 +201,7 @@ second copy of the app).
 |---|---|
 | A product or SaaS API before launch | Every check applies, and 100 is genuinely reachable |
 | Internal tools and admin dashboards | Usually the worst offenders, because "it's only internal" |
-| A codebase you've just inherited | 31 concrete answers beats a week of reading unfamiliar code |
+| A codebase you've just inherited | 33 concrete answers beats a week of reading unfamiliar code |
 | One repo, scanned repeatedly over time | Watching the score move matters more than any single number |
 
 | Poor fit | Why |
@@ -210,16 +225,16 @@ Think of it as a thorough pre-launch checklist, not a live security test.
 
 ## What it checks
 
-Six categories, weighted to sum to 100, and 31 individual checks:
+Six categories, weighted to sum to 100, and 33 individual checks:
 
 | Category | Weight | Checks | What it looks at |
 |---|---:|---:|---|
 | **Security** | 25 | 8 | committed credentials, leaked secrets (**Gitleaks**), vulnerable dependencies (**Trivy**), dangerous code patterns (**Semgrep**), debug mode, TLS overrides, container secrets, `.gitignore` |
 | **Reliability** | 20 | 4 | health endpoint, request timeouts, swallowed errors, retries |
-| **Architecture** | 20 | 5 | tests, dependency locking, file size, layout, documentation |
-| **Deployment** | 15 | 8 | deployment config, image pinning, non-root user, healthcheck, build context, CI, signal handling, host isolation |
+| **Deployment** | 17 | 10 | deployment config, image pinning, non-root user, healthcheck, build context, CI, signal handling, host isolation, Dockerfile lint (**Hadolint**), infrastructure misconfiguration (**Checkov**) |
+| **Architecture** | 14 | 5 | tests, dependency locking, file size, layout, documentation |
+| **Scalability** | 14 | 3 | in-memory state, local file storage, connection pooling |
 | **Observability** | 10 | 3 | logging, structured output, metrics and error tracking |
-| **Scalability** | 10 | 3 | in-memory state, local file storage, connection pooling |
 
 All six categories are fully working — a genuinely clean repository can score
 a real 100. And a category that couldn't be assessed **contributes nothing**
@@ -230,8 +245,8 @@ Same idea applies to individual checks: if every check in a category gets
 *skipped* (none of it applied), that category earns zero, not full marks.
 Scalability on a small CLI tool is the clean example — all three of its
 checks are about how the app behaves running as multiple copies, none of
-which applies to a CLI tool, so scoring it a full 10 would be rewarding work
-nobody did. One real passing check is enough to keep the category alive; the
+which applies to a CLI tool, so scoring it the full 14 would be rewarding
+work nobody did. One real passing check is enough to keep the category alive; the
 zero only kicks in when literally nothing could be checked.
 
 The security category mixes real tools with pattern-matching:
@@ -255,6 +270,21 @@ The remaining five security checks (credential files, debug mode, TLS
 overrides, container secrets, `.gitignore`) are simple pattern checks rather
 than full tools — cheap to run, tested against real repositories, and
 measured at zero false positives so far.
+
+The deployment category runs two more real tools, for the same reason:
+
+- **Hadolint** lints Dockerfiles — unpinned system packages, unsafe shell
+  scripting caught by ShellCheck, and other layer-hygiene issues a plain
+  structural read of the file wouldn't catch. It deliberately doesn't
+  re-report four things this project's own checks already catch more
+  precisely (a missing `USER` line, Compose file images, init wrappers like
+  `tini`), so nothing gets flagged twice under two different names.
+- **Checkov** checks real infrastructure — Terraform files — for
+  misconfiguration: a public storage bucket, a security group open to the
+  whole internet, access that should go through SSO instead of a long-lived
+  IAM user. This closed a real gap: a repository deployed purely via
+  Terraform used to be scored as having no deployment setup at all, simply
+  because nothing here had ever looked at a `.tf` file before.
 
 ### How it avoids false alarms
 
@@ -295,10 +325,10 @@ context to actually check it:
 | | What you get | Why it matters |
 |---|---|---|
 | **Commit context** | The exact commit that was scanned — SHA, message, author, date | "The score dropped 6" becomes "the score dropped 6 *at this specific commit*" |
-| **Every check's outcome** | All 31 checks, each marked passed, failed, skipped (with a reason), or errored | A perfect score can show you what was actually verified, not just that nothing complained |
+| **Every check's outcome** | All 33 checks, each marked passed, failed, skipped (with a reason), or errored | A perfect score can show you what was actually verified, not just that nothing complained |
 | **Comparison to the last scan** | Score and per-category movement, plus exactly which checks changed | Shows regressions first — what got worse matters most |
 | **Failure diagnostics** | If a scan itself fails, you get which category, a plain explanation, and a suggested fix | Better than a bare "scan failed" with no next step |
-| **PDF report** | `GET /scans/{id}/report` — the full score, breakdown, findings, and all 31 checks as a downloadable document | Something you can attach to a ticket or hand to someone without a login |
+| **PDF report** | `GET /scans/{id}/report` — the full score, breakdown, findings, and all 33 checks as a downloadable document | Something you can attach to a ticket or hand to someone without a login |
 
 The comparison feature is deliberately cautious — it'll refuse to show a
 before/after difference when: the scoring rules themselves changed between
@@ -319,7 +349,7 @@ Frontend (React)  ──►  API (FastAPI)  ──►  Postgres
                        Redis queue ──► Worker ┘
                                           │
                                           ▼
-                  clone → index → 6 scanners → 31 checks → score
+                  clone → index → 6 scanners → 33 checks → score
                                         │
                                         └─ sandboxed tools (no network)
 ```
@@ -363,6 +393,7 @@ into dashboards.
 | `backend/app/services/` | The actual business logic, shared by both the API and the worker |
 | `backend/app/scanners/` | Takes a repository in, returns check results out — nothing else |
 | `backend/app/scanners/security/tools/` | One file per external tool (Gitleaks/Trivy/Semgrep) |
+| `backend/app/scanners/deployment/tools/` | Same pattern, one file per tool (Hadolint/Checkov) |
 | `backend/app/workers/` | Queue handling and repository cloning |
 | `backend/app/utils/sandbox.py` | The only code allowed to start a container that runs on a stranger's code |
 | `backend/app/models/` `schemas/` | Database tables, and API request/response shapes — kept deliberately separate |
@@ -397,11 +428,12 @@ repository as untrusted input:
 - The worker runs as a non-root user, and only the worker (not the API) has
   `git` installed at all
 
-The three tool-backed security checks go further, since they're the only
-part of this system that actually **runs** other people's code (via
-Gitleaks/Trivy/Semgrep): each runs in its own locked-down container with no
-network access at all, read-only filesystem access, every extra permission
-stripped, and a memory/CPU cap. If a scan needed to trust a sandbox, it can't
+The five tool-backed checks go further, since they're the only part of this
+system that actually **runs** other people's code — three in Security
+(Gitleaks/Trivy/Semgrep) and two in Deployment (Hadolint/Checkov): each runs
+in its own locked-down container with no network access at all, read-only
+filesystem access, every extra permission stripped, and a memory/CPU cap. If
+a scan needed to trust a sandbox, it can't
 — the sandbox refuses to run rather than run unsafely.
 
 On the account side: passwords are hashed with bcrypt, the login session is
@@ -455,6 +487,11 @@ variables, set by whatever infrastructure is running it.
 - [x] **Full observability** — Prometheus, Grafana, and Loki running
       alongside the live app: real-time dashboards for traffic, the scan
       queue, container health, and searchable live logs
+- [x] **Infrastructure-as-code checking** — Hadolint and Checkov joined the
+      sandboxed tool lineup, closing a real gap where a repository deployed
+      purely via Terraform was scored as having no deployment configuration
+      at all. Category weights were also re-priced against what actually
+      breaks a SaaS at real concurrency, not left at their original values
 - [ ] **Load testing** — not yet done; how the app behaves under heavy
       concurrent scan traffic is still unverified
 
