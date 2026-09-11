@@ -56,16 +56,30 @@ services:
       - /:/host/root:ro
 
   # Per-container CPU/memory/network, one series per container — what the
-  # "Container resources" dashboard reads. privileged: true is required for
-  # cgroup access; no published port, reached only by Prometheus over this
-  # network.
+  # "Container resources" dashboard reads. No published port, reached only by
+  # Prometheus over this network.
+  #
+  # Not privileged. cAdvisor's own documented non-privileged setup needs exactly
+  # one host device (/dev/kmsg) rather than every capability and every device,
+  # which is what `privileged: true` grants. If container_* series ever go
+  # missing after a kernel or cgroup change, this is the line to suspect — put
+  # `privileged: true` back and drop `devices:` to confirm, then work out which
+  # specific grant was actually needed.
+  #
+  # The socket mount is the single socket, not the whole of /var/run. cAdvisor
+  # only wants it to read container metadata. Worth knowing: narrowing it this
+  # way makes the grant MORE visible to this project's own
+  # deployment.privileged check, not less — a directory containing the socket
+  # used to slip past it. Being caught for the smaller grant is the right
+  # direction.
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped
-    privileged: true
+    devices:
+      - /dev/kmsg
     volumes:
       - /:/rootfs:ro
-      - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro

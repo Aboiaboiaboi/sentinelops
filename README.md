@@ -131,28 +131,32 @@ You give it a repository URL. A few seconds later you get something like
 this — a real scan of **this repository, run just now**, not a mockup:
 
 ```
-sentinelops                                        94 / 100    Grade A
+sentinelops                                        95 / 100    Grade A
 6 of 6 categories reported
-33 checks: 26 passed · 4 skipped · 3 flagged
+33 checks: 27 passed · 4 skipped · 2 flagged
 
   Security         25 / 25   ████████████████████
   Reliability      20 / 20   ████████████████████
   Architecture     14 / 14   ████████████████████
   Scalability      14 / 14   ████████████████████
   Observability    10 / 10   ████████████████████
-  Deployment       11 / 17   █████████████░░░░░░░
+  Deployment       12 / 17   ██████████████░░░░░░
 ```
 
-Three findings. One is deliberate rather than overlooked; the other two are
-real issues the two newest checks — Hadolint and Checkov — actually found in
-this project's own Dockerfile and Terraform:
+Two findings. One is deliberate rather than overlooked; the other is a real
+issue Checkov — one of the two newest checks — actually found in this
+project's own Terraform:
 
 > **Container granted host-level access** · HIGH · −2
 > `docker-compose.yml` mounts the Docker socket into a container, which is
-> effectively root on the host machine. This is a real and common pattern in
-> local development (it's how the security scanners here start their own
-> sandboxed tool containers) — but it's the kind of line that's easy to
-> forget about and accidentally carry into something that actually ships.
+> effectively root on the host machine. The same is true of
+> `deploy/compose/docker-compose.observability.yml` and
+> `deploy/compose/docker-compose.prod.yml` — every file that grants it gets
+> named, not just whichever sorts first, so the dev-only case can't quietly
+> hide a deployed one. This is a real and necessary pattern here (it's how the
+> security scanners start their own sandboxed tool containers, and how
+> monitoring reads container stats) — the finding stays on the scoreboard so
+> it can never end up somewhere it shouldn't without someone noticing.
 >
 > **Recommendation:** keep this out of anything deployed for real. If a
 > container genuinely needs it, grant only the specific permission it needs
@@ -163,16 +167,11 @@ this project's own Dockerfile and Terraform:
 > doesn't pass, starting with access that should go through SSO rather than an
 > IAM user. A property of the infrastructure itself, not the application code.
 
-> **Dockerfile lint findings** · LOW · −1
-> `backend/Dockerfile` installs an apt package without pinning its version —
-> caught by Hadolint, which checks layer hygiene a structural Dockerfile
-> parse doesn't.
-
 The first is left on the scoreboard on purpose — a real trade-off, not a
-bug, and the finding exists to make sure it never quietly ends up somewhere
-it shouldn't. The other two are exactly what these two tools were added to
-catch, and they're both real — left unfixed here on purpose, as the honest
-current state rather than a score tidied up after the fact.
+bug. The second is exactly what Checkov was added to catch, and it's real —
+left unfixed here on purpose, as the honest current state rather than a
+score tidied up after the fact. (Hadolint's Dockerfile finding — an unpinned
+`apt-get install` — was real too, and got fixed: the version is pinned now.)
 
 Every scan can also be downloaded as a PDF with the same score, breakdown,
 findings, and all 33 checks (including the ones skipped, and why).

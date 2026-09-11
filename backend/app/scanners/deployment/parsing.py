@@ -237,7 +237,13 @@ def shell_form_entry(stage: Stage) -> str | None:
     return instruction
 
 
-# The four ways a committed deployment file hands a container authority over the
+# A mount *source* at the start of a Compose short-form entry (`- /x:/y`) or
+# after a long-form `source:` key, quoted or not. Anchors what follows so a
+# service name or an environment value containing one of these strings in
+# passing can't match — only an actual mount source can.
+_MOUNT_SOURCE = r"^\s*(?:-\s*|source\s*:\s*)[\"']?"
+
+# The ways a committed deployment file hands a container authority over the
 # machine it runs on. Written to match both Compose and Kubernetes, because
 # `privileged: true` is spelled identically in each and matching text is honest
 # about what this check is — a line scan, not a YAML parser.
@@ -249,6 +255,21 @@ _HOST_ACCESS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"/var/run/docker\.sock"),
         "mounts the Docker socket, which is root on the host machine",
+    ),
+    (
+        # /var/run (or /run) as the mount source, not merely mentioned in it —
+        # e.g. `- /var/run:/var/run:ro`. Everything under it is reachable,
+        # docker.sock included, which is why cAdvisor's own compose service
+        # mounts the socket by name instead: the same access, correctly scoped.
+        re.compile(_MOUNT_SOURCE + r"/(?:var/run|run)/?(?=:|$)"),
+        "mounts the host's runtime directory, which contains the Docker socket",
+    ),
+    (
+        # The bare root filesystem as a mount source — e.g. `- /:/rootfs:ro`.
+        # `:ro` narrows what the container can write, not what it can read;
+        # every secret and credential on the host is in here regardless.
+        re.compile(_MOUNT_SOURCE + r"/(?=:|$)"),
+        "mounts the host's entire root filesystem",
     ),
     (
         re.compile(r"^\s*-?\s*network_mode\s*:\s*[\"']?host[\"']?\s*$", re.IGNORECASE),
@@ -277,6 +298,15 @@ def host_access(content: str) -> str | None:
     deliberately not matched. Those are the capability model being used
     correctly, and flagging them would penalise the careful alternative to the
     blunt instrument this check is actually looking for.
+
+    `/var/lib/docker` is deliberately not matched either, even though mounting
+    it hands over every container's filesystem. It is not socket *control* —
+    flagging it belongs to a "reads sensitive host paths" question, not this
+    one, which is about authority over the machine itself. And a trailing
+    `:ro` on any of these mounts is not treated as protection: read-only does
+    not reliably stop a process on the other side connecting to a socket
+    that's reachable through it, and pretending otherwise would be this
+    scanner telling a comforting story rather than the honest one.
     """
     for line in code_only(content).splitlines():
         for pattern, description in _HOST_ACCESS_PATTERNS:

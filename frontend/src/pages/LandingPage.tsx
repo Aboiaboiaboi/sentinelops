@@ -13,7 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 const CATEGORY_SCORES = [
   { name: 'Security', score: 25, max: 25 },
   { name: 'Reliability', score: 20, max: 20 },
-  { name: 'Deployment', score: 11, max: 17 },
+  { name: 'Deployment', score: 12, max: 17 },
   { name: 'Architecture', score: 14, max: 14 },
   { name: 'Scalability', score: 14, max: 14 },
   { name: 'Observability', score: 10, max: 10 },
@@ -41,7 +41,7 @@ const FEATURES = [
 ];
 
 const STATS = [
-  { value: 94, suffix: '/100', label: 'Self-scan score' },
+  { value: 95, suffix: '/100', label: 'Self-scan score' },
   { value: 33, label: 'Checks run' },
   { value: 6, label: 'Categories' },
   { value: 5, label: 'Sandboxed tools' },
@@ -87,7 +87,7 @@ export default function LandingPage() {
                 <div className="mb-4 flex items-center justify-between">
                   <span className="text-muted-foreground">sentinelops --self-scan</span>
                   <span className="rounded bg-primary-bright/10 px-2 py-0.5 text-primary-bright">
-                    94 / 100 &middot; Grade A
+                    95 / 100 &middot; Grade A
                   </span>
                 </div>
                 <div className="space-y-2">

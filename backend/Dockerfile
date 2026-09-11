@@ -145,8 +145,15 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FROM runtime AS worker
 
 # Still root here — the runtime stage deliberately left the user unset.
+#
+# git pinned to the exact version python:3.14-slim (Debian 13/trixie) currently
+# carries, for the same reason the AMI in deploy/aws/instance.tf is pinned: an
+# unpinned apt install is Hadolint's DL3008, and a glob version (git=1:2.47.*)
+# satisfies apt but not the check — confirmed by hand, hadolint only clears on
+# the literal exact string. Bump deliberately if a future `apt-get update`
+# reports it as no longer available (Debian drops superseded point releases).
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends git \
+    && apt-get install --yes --no-install-recommends git=1:2.47.3-0+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
 # The Docker *client* only — a single static binary copied from the official

@@ -123,6 +123,11 @@ _MANIFEST_SUFFIXES = frozenset({".yml", ".yaml"})
 # worth. The same reasoning as MAX_READ_BYTES one level up.
 _MAX_MANIFESTS = 50
 
+# How many filenames the host-access finding spells out before falling back to
+# "…and N more" — every candidate is still checked, this only bounds the
+# description's length once several files grant the same thing.
+_MAX_NAMED_HOST_ACCESS = 5
+
 # CI providers that keep their config in a directory. Matched on the path
 # prefix so that an *empty* .github/workflows/ does not count — a directory with
 # no workflow in it runs nothing.
@@ -468,6 +473,12 @@ class DeploymentScanner:
         Asked of Compose and Kubernetes together. The grants are spelled the
         same way in both, and a repository that deploys to Kubernetes is
         precisely the one this check exists for.
+
+        Every matching file is named, not just the first. Stopping at the
+        first hit used to mean a socket mount in the local dev compose file —
+        which sorts before anything under deploy/ — silently hid the same
+        line in whatever actually gets deployed, just because it happened to
+        be read first.
         """
         candidates = compose_files + manifest_files
         if not candidates:
@@ -475,36 +486,58 @@ class DeploymentScanner:
                 _PRIVILEGED, "no Compose file or orchestration manifest was found to inspect"
             )
 
+        hits: list[tuple[str, str]] = []
         for path in candidates:
             description = host_access(repo.read(path))
-            if description is None:
-                continue
-            relative = repo.relative(path)
-            return flagged(
-                _PRIVILEGED,
-                ScanFinding(
-                    category=CATEGORY,
-                    severity=Severity.HIGH,
-                    title="Container granted host-level access",
-                    description=(
-                        f"{relative} defines a container that {description}. The isolation "
-                        "between the container and the machine it runs on is removed, so a "
-                        "compromise of the application is a compromise of the host rather than "
-                        "of a sandbox. A development-only Compose file is the common and "
-                        "legitimate case for this — the thing worth checking is that the line "
-                        "has not been copied into whatever actually gets deployed."
-                    ),
-                    recommendation=(
-                        "Remove the grant from anything that reaches a deployed environment. "
-                        "Where the capability is genuinely needed, add only the specific one "
-                        "(cap_add: NET_ADMIN) rather than privileged, and reach a container "
-                        "runtime through its platform API instead of by mounting its socket."
-                    ),
-                    score_impact=_PRIVILEGED_CONTAINER,
-                ),
-            )
+            if description is not None:
+                hits.append((repo.relative(path), description))
 
-        return passed(_PRIVILEGED)
+        if not hits:
+            return passed(_PRIVILEGED)
+
+        relative, description = hits[0]
+        others = hits[1:]
+
+        others_sentence = ""
+        if others:
+            named = ", ".join(name for name, _ in others[:_MAX_NAMED_HOST_ACCESS])
+            remaining = len(others) - _MAX_NAMED_HOST_ACCESS
+            if remaining > 0:
+                named += f", and {remaining} more"
+            others_sentence = f" The same is true of {named}."
+
+        # Only true, and only said, when there is exactly one file — naming a
+        # second one right after "the common case is fine" would undercut the
+        # finding it is attached to.
+        caveat = (
+            " A development-only Compose file is the common and legitimate case "
+            "for this — the thing worth checking is that the line has not been "
+            "copied into whatever actually gets deployed."
+            if not others
+            else ""
+        )
+
+        return flagged(
+            _PRIVILEGED,
+            ScanFinding(
+                category=CATEGORY,
+                severity=Severity.HIGH,
+                title="Container granted host-level access",
+                description=(
+                    f"{relative} defines a container that {description}.{others_sentence} "
+                    "The isolation between the container and the machine it runs on is "
+                    "removed, so a compromise of the application is a compromise of the "
+                    f"host rather than of a sandbox.{caveat}"
+                ),
+                recommendation=(
+                    "Remove the grant from anything that reaches a deployed environment. "
+                    "Where the capability is genuinely needed, add only the specific one "
+                    "(cap_add: NET_ADMIN) rather than privileged, and reach a container "
+                    "runtime through its platform API instead of by mounting its socket."
+                ),
+                score_impact=_PRIVILEGED_CONTAINER,
+            ),
+        )
 
     def _check_ci(self, repo: RepositoryIndex) -> CheckResult:
         # A CI directory only counts if it has something in it — an empty

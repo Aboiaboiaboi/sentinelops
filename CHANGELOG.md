@@ -9,6 +9,42 @@ this file existed; the entries below cover the recent, meaningful ones —
 earlier history is in `git log` and the repository's own tags, not
 reconstructed here.
 
+## [0.79.0] — 2026-09-11
+
+### Changed
+- cAdvisor no longer runs `privileged: true`. It gets exactly the one host
+  device it actually needs (`/dev/kmsg`) instead of every capability and
+  device on the box. Its runtime-directory mount is narrowed from all of
+  `/var/run` to the single socket it reads. Verified against the real
+  service, not assumed: `container_*` series still populate (1533 of them)
+  and the container reports healthy.
+- `deployment.privileged` ("Container granted host-level access") now
+  recognises a mount of the host's runtime directory or its entire root
+  filesystem as the same grant as mounting the Docker socket by name —
+  `- /var/run:/var/run:ro` and `- /:/rootfs:ro` used to walk straight past
+  it. Verified against every bind mount in this repo's own three deployment
+  files: the three new hits are all genuine (node-exporter's and cAdvisor's
+  root-filesystem mounts, cAdvisor's former runtime-directory mount), zero
+  false positives on `/proc`, `/sys`, `/var/lib/docker`, or any port mapping.
+
+### Fixed
+- `backend/Dockerfile` pins `git` to an exact version (`1:2.47.3-0+deb13u1`)
+  instead of installing it floating — Hadolint's DL3008, and now clean.
+  Confirmed by hand that a glob pin (`git=1:2.47.*`) satisfies apt but not
+  Hadolint; only the literal exact version does.
+- `deployment.privileged` ("Container granted host-level access") used to
+  report only the first file it found granting host access, and stop —
+  which meant a socket mount in the local dev compose file could silently
+  hide the same grant in whatever actually gets deployed, just because it
+  happened to be read first. It now names every matching file in one
+  finding. Score impact is unchanged (flat −2, same as Checkov's finding is
+  capped regardless of how many policies fail) — this is about honesty, not
+  a bigger penalty.
+- Self-scan: **95/100** (was 94) — the Hadolint finding is gone. The socket
+  finding is unchanged in cost but now names all three files that grant it
+  (`docker-compose.yml`, `deploy/compose/docker-compose.observability.yml`,
+  `deploy/compose/docker-compose.prod.yml`) instead of just the first.
+
 ## [0.77.0] — 2026-09-10
 
 ### Fixed

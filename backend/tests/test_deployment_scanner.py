@@ -264,6 +264,42 @@ class TestPrivilegedContainer:
 
         assert "Container granted host-level access" in _titles(tmp_path)
 
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "      - /var/run:/var/run:ro",
+            "      - /run:/run",
+            "      - /:/rootfs:ro",
+            "      source: /var/run",
+        ],
+    )
+    def test_flags_a_mount_that_exposes_the_socket_without_naming_it(
+        self, tmp_path: Path, line: str
+    ) -> None:
+        """A directory containing the socket, or the whole filesystem, hands
+        over the same authority as mounting the socket by name — the check
+        must not be fooled just because the literal path isn't spelled out."""
+        _write(tmp_path, "docker-compose.yml", f"services:\n  app:\n    image: app:1\n{line}\n")
+
+        assert "Container granted host-level access" in _titles(tmp_path)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "      - /var/lib/docker:/var/lib/docker:ro",
+            "      - /proc:/host/proc:ro",
+            "      - /sys:/sys:ro",
+            "      - /runtime-data:/data",
+            '      - "8000:8000"',
+        ],
+    )
+    def test_accepts_an_ordinary_mount(self, tmp_path: Path, line: str) -> None:
+        """Neither a near-miss path (/runtime-data is not /run) nor an
+        unrelated host mount should trip the new patterns."""
+        _write(tmp_path, "docker-compose.yml", f"services:\n  app:\n    image: app:1\n{line}\n")
+
+        assert "Container granted host-level access" not in _titles(tmp_path)
+
     def test_flags_sys_admin(self, tmp_path: Path) -> None:
         _write(
             tmp_path,
@@ -312,6 +348,35 @@ class TestPrivilegedContainer:
 
         finding = next(f for f in _scan(tmp_path) if f.title.startswith("Container granted"))
         assert finding.severity is Severity.HIGH
+
+    def test_names_every_file_when_more_than_one_grants_access(self, tmp_path: Path) -> None:
+        """A grant in the dev compose file must not hide the same grant in
+        whatever actually gets deployed — both get named, not just whichever
+        sorts first."""
+        _write(tmp_path, "docker-compose.yml", "services:\n  app:\n    privileged: true\n")
+        _write(
+            tmp_path,
+            "deploy/compose/docker-compose.prod.yml",
+            "services:\n  app:\n    network_mode: host\n",
+        )
+
+        finding = next(f for f in _scan(tmp_path) if f.title.startswith("Container granted"))
+
+        assert "docker-compose.yml" in finding.description
+        assert "deploy/compose/docker-compose.prod.yml" in finding.description
+        # Only true, and only said, for a single offending file.
+        assert "development-only Compose file is the common" not in finding.description
+        assert finding.score_impact == 2
+
+    def test_caps_the_named_files_and_says_how_many_more(self, tmp_path: Path) -> None:
+        for i in range(7):
+            _write(
+                tmp_path, f"svc{i}/docker-compose.yml", "services:\n  app:\n    privileged: true\n"
+            )
+
+        finding = next(f for f in _scan(tmp_path) if f.title.startswith("Container granted"))
+
+        assert "and 1 more" in finding.description
 
     def test_a_dockerfile_alone_is_not_asked_the_question(self, tmp_path: Path) -> None:
         """No orchestration means nothing declares how the container is run, so
