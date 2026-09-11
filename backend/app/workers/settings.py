@@ -13,7 +13,7 @@ from arq.connections import RedisSettings
 
 from app.config import get_settings
 from app.logging import configure_logging
-from app.utils.sandbox import DockerSandbox, set_sandbox
+from app.utils.sandbox import DockerSandbox, NullSandbox, set_sandbox
 from app.workers.scan_tasks import run_scan
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,12 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     configure_logging(settings.log_level)
 
     if not settings.sandbox_enabled:
-        # Left as the NullSandbox, which raises rather than running anything. A
-        # check with no sandbox reports errored; it never passes.
+        # NullSandbox raises rather than running anything; a check with no
+        # sandbox reports errored, never passes. Given the reason explicitly so
+        # the errored check says "SANDBOX_ENABLED is not set" rather than
+        # something generic.
+        logger.info("sandbox disabled; tool checks will report errored")
+        set_sandbox(NullSandbox("SANDBOX_ENABLED is not set on this worker"))
         return
 
     sandbox = DockerSandbox(
@@ -49,9 +53,12 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     )
     # Checked once at startup rather than per scan. A misconfigured volume is
     # otherwise discovered as a tool that mysteriously finds nothing, which is
-    # the single most expensive way for this to go wrong.
+    # the single most expensive way for this to go wrong. The reason is handed
+    # to NullSandbox so every errored tool check carries it — not just this log
+    # line, which nobody sees until they go looking.
     if (reason := await asyncio.to_thread(sandbox.verify)) is not None:
         logger.error("sandbox unusable, tool checks will report errored", extra={"reason": reason})
+        set_sandbox(NullSandbox(reason))
         return
 
     # A missing cache is a warning, not a refusal. Gitleaks, Hadolint and

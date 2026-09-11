@@ -152,7 +152,17 @@ services:
       # directly.
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
-      - "0"
+      # The worker runs unprivileged (USER app in backend/Dockerfile) and
+      # reaches the daemon through the mounted socket above, so it must be in
+      # the socket's group. That gid differs per host — root:root on Docker
+      # Desktop (0), root:docker on a Docker Engine install (the EC2 box, a
+      # non-root gid) — so it comes from .env. provision.sh and deploy.sh set
+      # DOCKER_GID with `stat -c '%g' /var/run/docker.sock`; the default of 0
+      # matches the old behaviour for anyone running compose by hand on Docker
+      # Desktop. Without the right value, verify() fails at startup and every
+      # tool check reports "the Docker daemon is not reachable" — which reads
+      # as a higher score, since errored checks cost nothing.
+      - "${DOCKER_GID:-0}"
     environment:
       ENVIRONMENT: production
       # Settings validates SECRET_KEY on every process that constructs it once

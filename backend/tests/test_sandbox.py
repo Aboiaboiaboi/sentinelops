@@ -551,6 +551,16 @@ def test_the_null_sandbox_refuses(tmp_path: Path) -> None:
         NullSandbox().run(SPEC, repo_path=tmp_path)
 
 
+def test_the_null_sandbox_carries_a_reason(tmp_path: Path) -> None:
+    """A worker that configured a sandbox and had verify() reject it installs a
+    NullSandbox holding that reason, so the errored check names the real
+    problem — not a flag that is already set."""
+    with pytest.raises(SandboxUnavailable, match="volume 'x' is missing") as raised:
+        NullSandbox("volume 'x' is missing").run(SPEC, repo_path=tmp_path)
+
+    assert "gitleaks" in str(raised.value)
+
+
 def test_nothing_is_installed_by_default() -> None:
     """A test run, or any environment without a runtime, must not silently
     report repositories as clean because no tool ever looked at them."""
@@ -621,18 +631,25 @@ def worker_startup(monkeypatch: pytest.MonkeyPatch):
         set_sandbox(original)
 
 
-async def test_a_disabled_sandbox_leaves_the_null_one_installed(worker_startup) -> None:
+async def test_a_disabled_sandbox_leaves_the_null_one_installed(
+    worker_startup, tmp_path: Path
+) -> None:
     await worker_startup(enabled=False)
 
     assert isinstance(get_sandbox(), NullSandbox)
+    with pytest.raises(SandboxUnavailable, match="SANDBOX_ENABLED"):
+        get_sandbox().run(SPEC, repo_path=tmp_path)
 
 
-async def test_an_unusable_sandbox_is_not_installed(worker_startup) -> None:
+async def test_an_unusable_sandbox_is_not_installed(worker_startup, tmp_path: Path) -> None:
     """A worker that cannot isolate anything must not hold a runner that would
-    be asked to try. Errored checks are the correct outcome, not a crash."""
+    be asked to try. Errored checks are the correct outcome, not a crash — and
+    they carry the reason verify() gave, not a generic one."""
     await worker_startup(reason="the Docker daemon is not reachable")
 
     assert isinstance(get_sandbox(), NullSandbox)
+    with pytest.raises(SandboxUnavailable, match="daemon is not reachable"):
+        get_sandbox().run(SPEC, repo_path=tmp_path)
 
 
 async def test_a_working_sandbox_replaces_the_null_one(worker_startup) -> None:

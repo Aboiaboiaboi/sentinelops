@@ -162,19 +162,26 @@ class SandboxRunner(Protocol):
 
 
 class NullSandbox:
-    """Refuses every run.
+    """Refuses every run, and says why.
 
     The default, so tests and any environment without a container runtime
     produce errored checks with a clear reason rather than silently reporting a
     repository as clean because nothing looked at it.
+
+    `reason=None` means "no runtime here at all" — a test process, or a worker
+    with SANDBOX_ENABLED unset. The worker sets `reason` when a runtime *was*
+    configured but verify() rejected it (bad volume, unreachable daemon), so the
+    errored check names the real problem instead of pointing at a flag that is
+    already set.
     """
+
+    def __init__(self, reason: str | None = None) -> None:
+        self._reason = reason
 
     def run(self, spec: SandboxSpec, *, repo_path: Path) -> SandboxResult:
         del repo_path
-        raise SandboxUnavailable(
-            f"No sandbox is configured, so {spec.image} was not run. "
-            "Set SANDBOX_ENABLED=true with a container runtime available."
-        )
+        detail = self._reason or "no container runtime is configured on this worker"
+        raise SandboxUnavailable(f"{spec.image} was not run: {detail}")
 
 
 # Variables the docker CLI needs to find its daemon, and the ones the operating

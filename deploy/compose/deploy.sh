@@ -35,7 +35,31 @@ DEPLOYED_SHA="$(git rev-parse HEAD)"
 echo "==> Deploying $DEPLOYED_SHA"
 cd deploy/compose
 
+# The gid that owns the Docker socket, for the worker's group_add (see
+# docker-compose.prod.yml). provision.sh sets it on first setup; refresh it here
+# every deploy so a box provisioned before this existed — or one whose host
+# docker group gid changed — doesn't leave the worker unable to reach the
+# daemon, which silently errors every tool check.
+DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+if grep -q '^DOCKER_GID=' .env; then
+    sed -i "s/^DOCKER_GID=.*/DOCKER_GID=${DOCKER_GID}/" .env
+else
+    echo "DOCKER_GID=${DOCKER_GID}" >>.env
+fi
+
 $COMPOSE build
+
+echo "==> Ensuring the sandboxed-tool images are present"
+# provision.sh pulls these on first setup; a box provisioned before they
+# existed (Hadolint and Checkov landed in v0.72) otherwise never gets them
+# through a plain deploy, and every Dockerfile/IaC check then reports errored —
+# which reads as a *higher* score, since an errored check costs nothing. No-op
+# when the images are already local. Gitleaks/Trivy/Semgrep come down as a side
+# effect of the warm-* one-shot services, so only these two need pulling here.
+# Kept in sync by hand with provision.sh and the IMAGE constants in
+# backend/app/scanners/*/tools/{hadolint,checkov}.py.
+docker pull hadolint/hadolint:v2.12.0-alpine
+docker pull bridgecrew/checkov:3.2.334
 
 echo "==> Migrating (blocks; a failed migration stops the deploy here, before"
 echo "    anything user-facing changes)"

@@ -9,6 +9,31 @@ this file existed; the entries below cover the recent, meaningful ones —
 earlier history is in `git log` and the repository's own tags, not
 reconstructed here.
 
+## [0.77.0] — 2026-09-10
+
+### Fixed
+- **The production worker could not reach the Docker daemon, so every tool
+  check errored and the self-scan read ~98 instead of 94.** The worker runs
+  unprivileged and the socket on a Docker Engine host is `root:docker` (a
+  non-root gid), but the compose file only granted the root group — which is
+  enough on Docker Desktop and nowhere else. `provision.sh` and `deploy.sh`
+  now record the socket's gid as `DOCKER_GID` in `.env` and the worker's
+  `group_add` uses it.
+- When a sandboxed tool check errors, the reason now names the actual cause. It
+  previously always said "Set SANDBOX_ENABLED=true" — even on a worker where
+  that flag was already set and the real problem was a missing volume or an
+  unreachable Docker daemon (which `verify()` had detected at startup and only
+  logged). The worker now installs a `NullSandbox` carrying that reason.
+- `deploy/compose/deploy.sh` pulls the Hadolint and Checkov images on every
+  deploy. Only `provision.sh` did before, so a box provisioned before those
+  tools existed never got the images through a normal deploy, and every
+  Dockerfile/IaC check silently errored — which raises the score, since an
+  errored check costs nothing.
+
+### Added
+- A troubleshooting section in `deploy/compose/README.md` for "the self-scan
+  scores higher than expected / every tool check is errored".
+
 ## [0.76.0] — 2026-09-10
 
 ### Changed

@@ -52,6 +52,20 @@ else
     echo ".env already exists — leaving existing values alone."
 fi
 
+# The gid that owns the Docker socket, for the worker's group_add (see
+# docker-compose.prod.yml). Not a secret and not a human decision — it is a
+# property of this host, and it differs between a Docker Engine install (this
+# box: root:docker) and Docker Desktop (root:root). Refreshed every run rather
+# than left alone, so a host change can't leave the sandbox silently broken.
+# deploy.sh does the same, for a box provisioned before this existed.
+DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+if grep -q '^DOCKER_GID=' .env; then
+    sed -i "s/^DOCKER_GID=.*/DOCKER_GID=${DOCKER_GID}/" .env
+else
+    echo "DOCKER_GID=${DOCKER_GID}" >>.env
+fi
+echo "Recorded DOCKER_GID=${DOCKER_GID} for the worker."
+
 # Fill in any generated secret that's currently empty — whether that's
 # because .env was just created above, or because it already existed but
 # predates a variable added since (this bit GRAFANA_ADMIN_PASSWORD once

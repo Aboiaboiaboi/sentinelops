@@ -142,6 +142,75 @@ everything including the named volumes — the database, the sandbox caches, and
 Caddy's certificate. The object storage bucket is not touched; delete it
 separately if you're done with it.
 
+## Troubleshooting
+
+**A self-scan scores *higher* than expected, and every tool check says
+`errored`.** An errored check means "we couldn't answer this" and costs zero
+points by design — so when the sandboxed tools can't run, the missing findings
+push the score *up*. A self-scan that should be 94 comes back 98. It is a less
+complete scan, not a better result.
+
+The errored reason on each check names the cause (as of v0.77 — before that it
+always said "Set SANDBOX_ENABLED=true" even when the flag was already set). Work
+down this list on the instance:
+
+1. **What the worker logged at startup:**
+   ```bash
+   cd ~/sentinelops/deploy/compose
+   docker compose -f docker-compose.prod.yml logs worker | grep -i sandbox
+   ```
+   `sandbox ready` — it works; a different worker process ran that scan (a
+   hand-started `arq` on the same Redis will steal jobs — don't run one).
+   `sandbox unusable … reason=…` — act on the reason.
+   Neither line — `SANDBOX_ENABLED` isn't reaching the container; see step 2.
+
+2. **The worker's environment:**
+   ```bash
+   docker compose -f docker-compose.prod.yml exec worker env | grep SANDBOX
+   ```
+   Expect `SANDBOX_ENABLED=true`, `SANDBOX_VOLUME=sentinelops_prod_worker_data`,
+   `SANDBOX_CACHE_VOLUME=sentinelops_prod_sandbox_cache` — exactly. If the
+   running container is older than this config, `up -d --force-recreate worker`.
+
+3. **The volumes exist:**
+   ```bash
+   docker volume ls | grep sentinelops_prod
+   ```
+   Both must be present. A `SANDBOX_VOLUME` that doesn't match a real volume
+   name makes Docker create an empty one silently, and every tool then scans
+   nothing.
+
+4. **The worker can reach the daemon.** It runs unprivileged and talks to the
+   daemon through the mounted socket:
+   ```bash
+   docker compose -f docker-compose.prod.yml exec worker docker version
+   ```
+   `permission denied … /var/run/docker.sock` means the worker isn't in the
+   socket's group. On a Docker Engine box the socket is `root:docker` (a
+   non-root gid); `provision.sh` and `deploy.sh` record it as `DOCKER_GID` in
+   `.env` and the compose file adds it to the worker's `group_add`. If it's
+   missing or stale:
+   ```bash
+   echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" >> .env   # or edit the existing line
+   docker compose -f docker-compose.prod.yml --env-file .env up -d --force-recreate worker
+   ```
+
+5. **The tool images are local:**
+   ```bash
+   docker images | grep -E 'hadolint|checkov|trivy|semgrep|gitleaks'
+   ```
+   Five pinned images. `deploy.sh` now pulls Hadolint and Checkov on every
+   deploy, but a box that hasn't redeployed since v0.77 may still be missing
+   them — `docker pull hadolint/hadolint:v2.12.0-alpine` and
+   `docker pull bridgecrew/checkov:3.2.334`.
+
+6. **Trivy and Semgrep specifically still error** (the others are fine) — the
+   cache volume is empty:
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env run --rm warm-trivy
+   docker compose -f docker-compose.prod.yml --env-file .env run --rm warm-semgrep
+   ```
+
 ## Observability
 
 `docker-compose.observability.yml` — Prometheus, Grafana, Loki, Grafana
