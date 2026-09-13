@@ -55,15 +55,12 @@ differences that make it safe to expose:
 | Origin | Vite proxies `/api` | Caddy proxies `/api` — same single-origin design, same reason |
 
 The sandbox works exactly as it does in development: `SANDBOX_ENABLED=true`,
-the worker mounts `/var/run/docker.sock` to start sibling tool containers. That
-mount is root-on-the-host granted to the worker process — the same trade
-`docker-compose.yml` documents at length — and it is the entire reason this
-path exists rather than reimplementing the sandbox against a cloud-specific job
-runner (`CloudRunJobSandbox` was Phase 5 milestone 3; it is not built, and this
-deployment target is why not — see `11-phase5-handoff.md`). It is an accepted
-risk here because nothing on this VM exposes the worker or the socket outside
-the VM itself: no published port, and everything public passes through Caddy
-first.
+and the worker asks a separate, host-level **scan broker**
+(`sentinelops-broker`, a systemd unit installed by `provision.sh` — see
+`backend/app/broker/`) to run one of five fixed tool images. Neither this
+compose file nor the dev one ever mounts `/var/run/docker.sock` — only the
+broker itself, running outside Compose entirely, does, and it will only ever
+run one of those five images regardless of what a compromised worker asks for.
 
 **One extra service: `frontend-build`.** It compiles the SPA and exits — it
 is not part of the six long-running services, it is a one-shot, the same
@@ -147,64 +144,69 @@ separately if you're done with it.
 **A self-scan scores *higher* than expected, and every tool check says
 `errored`.** An errored check means "we couldn't answer this" and costs zero
 points by design — so when the sandboxed tools can't run, the missing findings
-push the score *up*. A self-scan that should be 94 comes back 98. It is a less
-complete scan, not a better result.
+push the score *up*. A self-scan that should be 95 comes back higher. It is a
+less complete scan, not a better result.
 
-The errored reason on each check names the cause (as of v0.77 — before that it
-always said "Set SANDBOX_ENABLED=true" even when the flag was already set). Work
-down this list on the instance:
+Since v0.79, the worker never touches Docker directly — it asks a separate,
+host-level **scan broker** (`backend/app/broker/`, installed as the
+`sentinelops-broker` systemd unit by `provision.sh`, deliberately not a
+Compose service — see that package's docstring for why). The errored reason on
+each check names the cause. Work down this list on the instance:
 
-1. **What the worker logged at startup:**
+1. **Is the broker running at all?**
    ```bash
-   cd ~/sentinelops/deploy/compose
+   systemctl status sentinelops-broker
+   journalctl -u sentinelops-broker -n 50 --no-pager
+   ```
+   Not installed → run `./provision.sh` once. Installed but failed → the log
+   usually says why (missing `uv`, the checkout path in the unit file is
+   stale, or the volumes below don't exist yet).
+
+2. **What the worker logged at startup:**
+   ```bash
    docker compose -f docker-compose.prod.yml logs worker | grep -i sandbox
    ```
    `sandbox ready` — it works; a different worker process ran that scan (a
    hand-started `arq` on the same Redis will steal jobs — don't run one).
-   `sandbox unusable … reason=…` — act on the reason.
-   Neither line — `SANDBOX_ENABLED` isn't reaching the container; see step 2.
+   `scan broker unusable … reason=…` — act on the reason, usually "not
+   reachable" (steps 3-4) or a `403`/`503` from the broker itself (step 5).
+   Neither line — `SANDBOX_ENABLED` isn't reaching the container.
 
-2. **The worker's environment:**
+3. **The worker can open the broker's socket:**
    ```bash
-   docker compose -f docker-compose.prod.yml exec worker env | grep SANDBOX
+   docker compose -f docker-compose.prod.yml exec worker ls -l /run/sentinelops-broker.sock
+   docker compose -f docker-compose.prod.yml exec worker id
    ```
-   Expect `SANDBOX_ENABLED=true`, `SANDBOX_VOLUME=sentinelops_prod_worker_data`,
-   `SANDBOX_CACHE_VOLUME=sentinelops_prod_sandbox_cache` — exactly. If the
-   running container is older than this config, `up -d --force-recreate worker`.
+   `Permission denied` means the worker isn't in the socket's group. Compare
+   the socket's gid against `BROKER_GID` in `.env` — if they don't match (or
+   `.env` has no `BROKER_GID` at all), re-run `./provision.sh`, which recreates
+   the `sentinelops-broker` group and writes its real gid, then
+   `docker compose -f docker-compose.prod.yml --env-file .env up -d --force-recreate worker`.
 
-3. **The volumes exist:**
+4. **The broker itself can reach Docker.** It runs as a plain host process, in
+   the host's real `docker` group — `sudo -u <deploy-user> docker version`
+   should work with no `sudo` needed on the docker calls themselves. If it
+   doesn't, that user isn't actually in the `docker` group yet (`newgrp
+   docker` or a fresh login after `usermod -aG docker`).
+
+5. **The volumes the broker mounts for tools exist:**
    ```bash
    docker volume ls | grep sentinelops_prod
    ```
-   Both must be present. A `SANDBOX_VOLUME` that doesn't match a real volume
-   name makes Docker create an empty one silently, and every tool then scans
-   nothing.
+   Both must be present, with exactly the names
+   `deploy/compose/sentinelops-broker.service`'s `SANDBOX_VOLUME`/
+   `SANDBOX_CACHE_VOLUME` lines name. A mismatch makes Docker create an empty
+   volume silently, and every tool then scans nothing.
 
-4. **The worker can reach the daemon.** It runs unprivileged and talks to the
-   daemon through the mounted socket:
-   ```bash
-   docker compose -f docker-compose.prod.yml exec worker docker version
-   ```
-   `permission denied … /var/run/docker.sock` means the worker isn't in the
-   socket's group. On a Docker Engine box the socket is `root:docker` (a
-   non-root gid); `provision.sh` and `deploy.sh` record it as `DOCKER_GID` in
-   `.env` and the compose file adds it to the worker's `group_add`. If it's
-   missing or stale:
-   ```bash
-   echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" >> .env   # or edit the existing line
-   docker compose -f docker-compose.prod.yml --env-file .env up -d --force-recreate worker
-   ```
-
-5. **The tool images are local:**
+6. **The tool images are local:**
    ```bash
    docker images | grep -E 'hadolint|checkov|trivy|semgrep|gitleaks'
    ```
-   Five pinned images. `deploy.sh` now pulls Hadolint and Checkov on every
-   deploy, but a box that hasn't redeployed since v0.77 may still be missing
-   them — `docker pull hadolint/hadolint:v2.12.0-alpine` and
-   `docker pull bridgecrew/checkov:3.2.334`.
+   Five pinned images. `deploy.sh` pulls Hadolint and Checkov on every deploy;
+   `docker pull hadolint/hadolint:v2.12.0-alpine` and
+   `docker pull bridgecrew/checkov:3.2.334` by hand if still missing.
 
-6. **Trivy and Semgrep specifically still error** (the others are fine) — the
+7. **Trivy and Semgrep specifically still error** (the others are fine) — the
    cache volume is empty:
    ```bash
    docker compose -f docker-compose.prod.yml --env-file .env run --rm warm-trivy

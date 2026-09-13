@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Takes a bare Ubuntu VM — any cloud's free-trial box, or a spare machine — to
-# a running SentinelOps. The portability claim in 11-phase5-handoff.md made
-# concrete: run this on an AWS EC2 trial, an Azure VM trial, a Hetzner box or a
-# laptop, and the result is the same, because none of it names a cloud.
+# a running SentinelOps. The portability claim made concrete: run this on an
+# AWS EC2 trial, an Azure VM trial, a Hetzner box or a laptop, and the result
+# is the same, because none of it names a cloud.
 #
 # What it does NOT do: point a domain at this machine, or fill in a storage
 # bucket. Those are yours to decide before this script's last step, which is
@@ -52,19 +52,43 @@ else
     echo ".env already exists — leaving existing values alone."
 fi
 
-# The gid that owns the Docker socket, for the worker's group_add (see
-# docker-compose.prod.yml). Not a secret and not a human decision — it is a
-# property of this host, and it differs between a Docker Engine install (this
-# box: root:docker) and Docker Desktop (root:root). Refreshed every run rather
-# than left alone, so a host change can't leave the sandbox silently broken.
-# deploy.sh does the same, for a box provisioned before this existed.
-DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
-if grep -q '^DOCKER_GID=' .env; then
-    sed -i "s/^DOCKER_GID=.*/DOCKER_GID=${DOCKER_GID}/" .env
-else
-    echo "DOCKER_GID=${DOCKER_GID}" >>.env
+echo "==> Installing the scan broker"
+# The broker is what replaced the worker's own access to /var/run/docker.sock
+# (see backend/app/broker/). It runs as a systemd unit, deliberately outside
+# Compose entirely — a broker declared as a compose service would still need
+# the real socket mounted into it, in a file the deployment scanner reads,
+# which would defeat the point of building this at all.
+if ! command -v uv >/dev/null 2>&1; then
+    echo "Installing uv (the broker runs via 'uv run', same as this project's tests)."
+    curl -LsSf https://astral.sh/uv/install.sh | $SUDO env UV_INSTALL_DIR=/usr/local/bin sh
 fi
-echo "Recorded DOCKER_GID=${DOCKER_GID} for the worker."
+
+# A narrow group, not the host's real `docker` group — only the broker's own
+# systemd service needs to be in `docker`; everything else (the worker
+# container) only needs to be in *this* group, to open the broker's own
+# socket. Idempotent: -f does not error if it already exists.
+$SUDO groupadd -f sentinelops-broker
+BROKER_GID="$(getent group sentinelops-broker | cut -d: -f3)"
+if grep -q '^BROKER_GID=' .env; then
+    sed -i "s/^BROKER_GID=.*/BROKER_GID=${BROKER_GID}/" .env
+else
+    echo "BROKER_GID=${BROKER_GID}" >>.env
+fi
+echo "Recorded BROKER_GID=${BROKER_GID} for the worker."
+
+# REPO_ROOT is two directories up from here (deploy/compose/../..). Templated
+# into the unit rather than assumed, so this works from whatever path the
+# repository happens to be checked out at.
+REPO_ROOT="$(cd ../.. && pwd)"
+sed \
+    -e "s#__REPO_ROOT__#${REPO_ROOT}#g" \
+    -e "s#__SANDBOX_VOLUME__#sentinelops_prod_worker_data#g" \
+    -e "s#__SANDBOX_CACHE_VOLUME__#sentinelops_prod_sandbox_cache#g" \
+    -e "s/__DEPLOY_USER__/$(whoami)/g" \
+    sentinelops-broker.service | $SUDO tee /etc/systemd/system/sentinelops-broker.service >/dev/null
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable --now sentinelops-broker
+echo "Scan broker installed and started (systemctl status sentinelops-broker)."
 
 # Fill in any generated secret that's currently empty — whether that's
 # because .env was just created above, or because it already existed but

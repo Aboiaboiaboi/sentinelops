@@ -11,9 +11,10 @@ from typing import Any
 
 from arq.connections import RedisSettings
 
+from app.broker.client import BrokerSandbox
 from app.config import get_settings
 from app.logging import configure_logging
-from app.utils.sandbox import DockerSandbox, NullSandbox, set_sandbox
+from app.utils.sandbox import NullSandbox, set_sandbox
 from app.workers.scan_tasks import run_scan
 
 logger = logging.getLogger(__name__)
@@ -22,16 +23,20 @@ settings = get_settings()
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:
-    """Reassert JSON logging, and install the sandbox.
+    """Reassert JSON logging, and connect to the scan broker.
 
     Logging is redundant when started through `app.workers.main`, which
     configures it before the worker exists. Kept because it is the only thing
     that helps if someone runs the arq CLI directly, where arq's own dictConfig
     would otherwise leave the output as plain text.
 
-    The sandbox is installed here and nowhere else. The API never runs a tool —
-    it does not even have git — so a sandbox in the API process would be one
-    more thing able to reach the Docker socket for no reason.
+    The sandbox connection is installed here and nowhere else. The API never
+    runs a tool — it does not even have git — so it has no need to reach the
+    broker at all.
+
+    This worker never touches Docker directly any more: it holds a
+    BrokerSandbox pointed at a Unix socket the broker — a host-level process
+    started by systemd, not by Compose — owns. See app/broker/ for why.
     """
     configure_logging(settings.log_level)
 
@@ -44,49 +49,19 @@ async def on_startup(ctx: dict[str, Any]) -> None:
         set_sandbox(NullSandbox("SANDBOX_ENABLED is not set on this worker"))
         return
 
-    sandbox = DockerSandbox(
-        volume=settings.sandbox_volume,
-        cache_volume=settings.sandbox_cache_volume,
-        max_timeout_seconds=settings.sandbox_timeout_seconds,
-        max_memory_mb=settings.sandbox_memory_mb,
-        max_concurrent=settings.sandbox_max_concurrent,
-    )
-    # Checked once at startup rather than per scan. A misconfigured volume is
-    # otherwise discovered as a tool that mysteriously finds nothing, which is
-    # the single most expensive way for this to go wrong. The reason is handed
-    # to NullSandbox so every errored tool check carries it — not just this log
+    sandbox = BrokerSandbox(settings.sandbox_broker_socket)
+    # Checked once at startup rather than per scan. The reason is handed to
+    # NullSandbox so every errored tool check carries it — not just this log
     # line, which nobody sees until they go looking.
-    if (reason := await asyncio.to_thread(sandbox.verify)) is not None:
-        logger.error("sandbox unusable, tool checks will report errored", extra={"reason": reason})
+    if (reason := await asyncio.to_thread(sandbox.health)) is not None:
+        logger.error(
+            "scan broker unusable, tool checks will report errored", extra={"reason": reason}
+        )
         set_sandbox(NullSandbox(reason))
         return
 
-    # A missing cache is a warning, not a refusal. Gitleaks, Hadolint and
-    # Checkov need no cache and run regardless — Checkov's policy library
-    # ships inside its image, and Hadolint has no external data at all; only
-    # the Trivy and Semgrep checks report errored, which is the honest answer
-    # while the warm services are still downloading.
-    cache = settings.sandbox_cache_volume
-    if cache and not await asyncio.to_thread(sandbox.volume_exists, cache):
-        logger.warning(
-            "sandbox cache volume is missing; tools that need it will report errored",
-            extra={"volume": cache, "fix": "docker compose up warm-trivy warm-semgrep"},
-        )
-
     set_sandbox(sandbox)
-    logger.info(
-        "sandbox ready",
-        extra={
-            "volume": settings.sandbox_volume or "(bind mount)",
-            # Logged together because they are the memory ceiling for this
-            # worker, and they are set in two different files. Their product is
-            # the number worth knowing, and it is the number nobody computes
-            # until something is killed for being over it.
-            "max_concurrent": settings.sandbox_max_concurrent,
-            "memory_mb": settings.sandbox_memory_mb,
-            "peak_memory_mb": settings.sandbox_max_concurrent * settings.sandbox_memory_mb,
-        },
-    )
+    logger.info("sandbox ready", extra={"broker_socket": settings.sandbox_broker_socket})
 
 
 class WorkerSettings:

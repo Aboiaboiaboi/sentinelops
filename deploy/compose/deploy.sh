@@ -35,19 +35,19 @@ DEPLOYED_SHA="$(git rev-parse HEAD)"
 echo "==> Deploying $DEPLOYED_SHA"
 cd deploy/compose
 
-# The gid that owns the Docker socket, for the worker's group_add (see
-# docker-compose.prod.yml). provision.sh sets it on first setup; refresh it here
-# every deploy so a box provisioned before this existed — or one whose host
-# docker group gid changed — doesn't leave the worker unable to reach the
-# daemon, which silently errors every tool check.
-DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
-if grep -q '^DOCKER_GID=' .env; then
-    sed -i "s/^DOCKER_GID=.*/DOCKER_GID=${DOCKER_GID}/" .env
-else
-    echo "DOCKER_GID=${DOCKER_GID}" >>.env
-fi
-
 $COMPOSE build
+
+echo "==> Restarting the scan broker"
+# The broker (backend/app/broker/, installed by provision.sh as a systemd
+# unit — never a compose service) lives in this same checkout, so it needs
+# picking up on every deploy the same as the containers do. If a box was
+# provisioned before the broker existed, this restart is a no-op the unit
+# file itself doesn't exist yet for; provision.sh is still required once.
+if systemctl list-unit-files sentinelops-broker.service >/dev/null 2>&1; then
+    sudo systemctl restart sentinelops-broker
+else
+    echo "sentinelops-broker.service is not installed — run provision.sh once first."
+fi
 
 echo "==> Ensuring the sandboxed-tool images are present"
 # provision.sh pulls these on first setup; a box provisioned before they

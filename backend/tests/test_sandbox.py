@@ -590,20 +590,15 @@ def test_both_implementations_satisfy_the_protocol(implementation: object) -> No
 # ---------------------------------------------------------------------------
 
 
-class FakeSandbox:
-    """A DockerSandbox that answers its probes without a daemon."""
+class FakeBrokerSandbox:
+    """A BrokerSandbox that answers .health() without a real socket."""
 
-    def __init__(self, *, reason: str | None = None, has_cache: bool = True, **kwargs: Any) -> None:
-        del kwargs
+    def __init__(self, socket_path: str, *, reason: str | None = None) -> None:
+        del socket_path
         self._reason = reason
-        self._has_cache = has_cache
 
-    def verify(self) -> str | None:
+    def health(self) -> str | None:
         return self._reason
-
-    def volume_exists(self, name: str) -> bool:
-        del name
-        return self._has_cache
 
     def run(self, spec: SandboxSpec, *, repo_path: Path) -> SandboxResult:
         raise AssertionError("not called")
@@ -616,12 +611,13 @@ def worker_startup(monkeypatch: pytest.MonkeyPatch):
 
     original = get_sandbox()
 
-    async def run(*, enabled: bool = True, cache: str = "", **sandbox_kwargs: Any) -> None:
+    async def run(*, enabled: bool = True, reason: str | None = None) -> None:
         monkeypatch.setattr(worker_settings.settings, "sandbox_enabled", enabled)
-        monkeypatch.setattr(worker_settings.settings, "sandbox_volume", "vol")
-        monkeypatch.setattr(worker_settings.settings, "sandbox_cache_volume", cache)
+        monkeypatch.setattr(worker_settings.settings, "sandbox_broker_socket", "/fake-broker.sock")
         monkeypatch.setattr(
-            worker_settings, "DockerSandbox", lambda **kwargs: FakeSandbox(**sandbox_kwargs)
+            worker_settings,
+            "BrokerSandbox",
+            lambda socket_path: FakeBrokerSandbox(socket_path, reason=reason),
         )
         await worker_settings.on_startup({})
 
@@ -641,45 +637,21 @@ async def test_a_disabled_sandbox_leaves_the_null_one_installed(
         get_sandbox().run(SPEC, repo_path=tmp_path)
 
 
-async def test_an_unusable_sandbox_is_not_installed(worker_startup, tmp_path: Path) -> None:
-    """A worker that cannot isolate anything must not hold a runner that would
+async def test_an_unreachable_broker_is_not_installed(worker_startup, tmp_path: Path) -> None:
+    """A worker that cannot reach the broker must not hold a runner that would
     be asked to try. Errored checks are the correct outcome, not a crash — and
-    they carry the reason verify() gave, not a generic one."""
-    await worker_startup(reason="the Docker daemon is not reachable")
+    they carry the reason health() gave, not a generic one."""
+    await worker_startup(reason="the scan broker is not reachable at /fake-broker.sock")
 
     assert isinstance(get_sandbox(), NullSandbox)
-    with pytest.raises(SandboxUnavailable, match="daemon is not reachable"):
+    with pytest.raises(SandboxUnavailable, match="not reachable"):
         get_sandbox().run(SPEC, repo_path=tmp_path)
 
 
-async def test_a_working_sandbox_replaces_the_null_one(worker_startup) -> None:
+async def test_a_working_broker_replaces_the_null_one(worker_startup) -> None:
     await worker_startup()
 
-    assert isinstance(get_sandbox(), FakeSandbox)
-
-
-async def test_a_missing_cache_warns_but_still_installs_the_sandbox(
-    worker_startup, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Gitleaks needs no cache. Refusing the whole sandbox over a missing
-    vulnerability database would take a working tool down with a missing one.
-
-    Asserted against stdout rather than caplog: on_startup reconfigures logging
-    as its first act, which replaces every root handler — including the one
-    caplog installs — so the JSON stream is the only place the line lands.
-    """
-    await worker_startup(cache="sentinelops_sandbox_cache", has_cache=False)
-
-    assert isinstance(get_sandbox(), FakeSandbox)
-    assert "cache volume is missing" in capsys.readouterr().out
-
-
-async def test_a_warmed_cache_says_nothing(
-    worker_startup, capsys: pytest.CaptureFixture[str]
-) -> None:
-    await worker_startup(cache="sentinelops_sandbox_cache", has_cache=True)
-
-    assert "cache volume is missing" not in capsys.readouterr().out
+    assert isinstance(get_sandbox(), FakeBrokerSandbox)
 
 
 # ---------------------------------------------------------------------------

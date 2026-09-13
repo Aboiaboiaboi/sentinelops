@@ -1,0 +1,43 @@
+[Unit]
+# The scan broker — the only process on this machine allowed to touch the
+# real Docker socket. Deliberately NOT a Compose service: a broker declared in
+# docker-compose.yml or docker-compose.prod.yml would still need
+# /var/run/docker.sock mounted into *it*, in a file the deployment scanner
+# reads, which defeats the entire point of building this. See
+# backend/app/broker/ for the design and backend/app/scanners/deployment/ for
+# the check this exists to satisfy honestly.
+Description=SentinelOps scan broker
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+# Wherever this repository is checked out — provision.sh and deploy.sh
+# install this unit with the real path substituted in. Run as the deploying
+# user (already a member of the host's real `docker` group, the same as
+# anyone who runs `docker` by hand) rather than root — the broker only needs
+# what that membership already grants. __DEPLOY_USER__ is a plain textual
+# placeholder substituted before this file is installed, not systemd's own
+# %i specifier — this is not a template unit.
+User=__DEPLOY_USER__
+WorkingDirectory=__REPO_ROOT__/backend
+ExecStart=/usr/bin/env uv run python -m app.broker.server
+Restart=on-failure
+RestartSec=2
+
+# The broker's own configuration — the volume names, ceilings, and socket
+# location this project's docker-compose.yml and docker-compose.prod.yml used
+# to carry directly. provision.sh / deploy.sh fill in DOCKER_GID-equivalent
+# details (the BROKER_GID a compose worker needs to open this socket) but
+# these five values rarely change and are set here, once, rather than in a
+# separate file this unit would then have to be told to read.
+Environment=SANDBOX_VOLUME=__SANDBOX_VOLUME__
+Environment=SANDBOX_CACHE_VOLUME=__SANDBOX_CACHE_VOLUME__
+Environment=SANDBOX_TIMEOUT_SECONDS=300
+Environment=SANDBOX_MEMORY_MB=512
+Environment=SANDBOX_MAX_CONCURRENT=6
+Environment=SANDBOX_BROKER_SOCKET=/run/sentinelops-broker.sock
+Environment=SENTINELOPS_BROKER_GROUP=sentinelops-broker
+
+[Install]
+WantedBy=multi-user.target

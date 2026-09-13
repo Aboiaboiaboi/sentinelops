@@ -9,6 +9,39 @@ this file existed; the entries below cover the recent, meaningful ones —
 earlier history is in `git log` and the repository's own tags, not
 reconstructed here.
 
+## [0.80.0] — 2026-09-13
+
+### Changed
+- **The worker no longer holds Docker access at all.** A new host-level
+  **scan broker** (`backend/app/broker/`) is now the only process that can
+  reach `/var/run/docker.sock` — installed as a systemd unit
+  (`deploy/compose/sentinelops-broker.service`), deliberately never a Compose
+  service, since a broker declared in `docker-compose.yml` would still need
+  the real socket mounted into *it*, in a file the scanner reads. The worker
+  talks to it over a narrow Unix socket and can ask for exactly one of the
+  five pinned tool images, with every `docker run` flag decided by the
+  broker, never the caller. Confirmed directly against this repo:
+  `deployment.privileged` no longer flags `docker-compose.yml` or
+  `docker-compose.prod.yml` — the finding that started this work is gone from
+  both. (The observability compose file's unrelated `/:/rootfs:ro` mount for
+  metrics collection still flags, at the same flat −2 as before — the score
+  is unchanged.)
+- **Local development moves off Docker Desktop onto WSL2 + native Ubuntu
+  Docker Engine.** Docker Desktop's socket is `root:root`, which is why
+  `group_add: ["0"]` ever worked locally in the first place — a real Docker
+  Engine install (WSL2, the EC2 box) uses `root:docker` instead, and this was
+  the root cause of an earlier session's whole `DOCKER_GID` chase. Moving dev
+  onto the same kind of Docker prod runs on removes that class of bug
+  entirely, and gives the broker a real systemd to run under locally too.
+  New `deploy/compose/provision-dev.sh` sets up the broker for a fresh
+  checkout; `provision.sh`/`deploy.sh` do the equivalent on the EC2 box,
+  replacing the `DOCKER_GID` step from v0.77 with a `BROKER_GID` one (a new,
+  narrow `sentinelops-broker` group — not the host's real `docker` group).
+- `SANDBOX_VOLUME`, `SANDBOX_CACHE_VOLUME`, and `SANDBOX_MAX_CONCURRENT` move
+  from the worker's environment to the broker's own systemd unit — the
+  worker no longer needs to know any of them, only `SANDBOX_ENABLED` and
+  where the broker's socket is.
+
 ## [0.79.0] — 2026-09-11
 
 ### Changed

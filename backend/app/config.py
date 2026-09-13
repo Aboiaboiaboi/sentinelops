@@ -92,40 +92,17 @@ class Settings(BaseSettings):
     # against a hostile repository on whatever machine happens to start the
     # worker.
     sandbox_enabled: bool = False
-    # The named volume holding clones, when the worker is itself a container.
-    # Empty means the worker runs on the host and the clone can be bind-mounted
-    # by its real path. See DockerSandbox — getting this wrong makes every tool
-    # scan an empty directory and report a clean repository.
-    sandbox_volume: str = ""
-    # The named volume holding Trivy's vulnerability database and Semgrep's
-    # rules, mounted read-only into each scan container. The sandbox has no
-    # network, so a tool that needs data from the internet gets it from here or
-    # reports errored. Populated by the warm services in docker-compose.yml.
-    sandbox_cache_volume: str = ""
-    sandbox_timeout_seconds: int = 300
-    sandbox_memory_mb: int = 512
-    # How many tool containers this worker may run at once, across every scan it
-    # is handling. Without it the real ceiling is max_jobs × tools-per-scanner,
-    # a number set in two files that neither one states — five scans running
-    # five tools each (three security, two deployment, since Hadolint and
-    # Checkov joined Gitleaks/Trivy/Semgrep) is twenty-five containers, and at
-    # the limit above that is more memory than a developer's Docker VM has.
+    # Where the scan broker's Unix socket is bind-mounted into this container.
+    # The broker — a plain host process started by systemd, never by Compose —
+    # is the only thing that touches the real Docker socket; this worker holds
+    # only a narrow connection to it. See app/broker/ for the whole design, and
+    # its docstring for why the broker cannot itself be a compose service.
     #
-    # Six is well under even one scan's worth of tools now, and it is
-    # affordable because measurement said so: peaks are Semgrep 271 MiB,
-    # Gitleaks 58, Trivy 39, Checkov 156, Hadolint too fast to catch on a
-    # sampling profiler (a tiny statically-linked binary, comfortably under
-    # 50 MiB) — six containers cost well under a gigabyte in practice against
-    # the 3 GB their limits allow. A limit is not a reservation.
-    #
-    # Queueing past this is cheap rather than dangerous. On a 2,500-file
-    # repository the three security tools cost ~34 container-seconds
-    # together; the two deployment tools are lighter still — measured under
-    # 1s (Hadolint) and ~3s (Checkov) against this project's own real
-    # Dockerfile and Terraform — so even five scans contending for these
-    # slots wait tens of seconds against the 300s ceiling in _slot. Raising
-    # it buys throughput, not correctness.
-    sandbox_max_concurrent: int = 6
+    # The volume/cache-volume names, the per-tool memory and timeout ceilings,
+    # and the concurrency limit all used to live here and are now the broker's
+    # own concern, configured on the host where it runs — this worker no
+    # longer needs to know any of them.
+    sandbox_broker_socket: str = "/run/sentinelops-broker.sock"
 
     # Only consulted when the browser talks to the API cross-origin. Local dev
     # goes through the frontend's /api proxy, which is same-origin, so CORS never

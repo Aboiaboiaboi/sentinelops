@@ -179,27 +179,26 @@ services:
     restart: unless-stopped
     volumes:
       - worker_data:/data
-      # THE DOCKER SOCKET IS ROOT ON THE HOST. Anything that can reach it can
-      # start a privileged container and own this machine — the socket has no
-      # concept of "only allowed to run these images". It is here so the worker
-      # can start sibling containers for the security tools, and it belongs in
-      # this development file and NOWHERE ELSE. Do not copy this line into a
-      # deployed environment: Phase 5 replaces it with Cloud Run Jobs, which is
-      # the whole reason SandboxRunner is a protocol rather than a function.
-      - /var/run/docker.sock:/var/run/docker.sock
-    # The socket is mode 660 root:root, and the worker runs as an unprivileged
-    # user — so without this it gets EACCES and every tool check reports errored.
-    # Adding the app user to the root *group* is a real privilege increase, and
-    # it is honest to note that it changes little: anything that can reach this
-    # socket is already root-equivalent on the host. Development only, for the
-    # same reason as the mount above.
+      # The scan broker's own socket — not the real Docker socket. The broker
+      # is a plain host process started by systemd (see
+      # deploy/compose/sentinelops-broker.service and
+      # deploy/compose/provision-dev.sh), never a Compose service, specifically
+      # so this file never has to mount /var/run/docker.sock again. The worker
+      # can ask the broker to run one of five fixed tool images; it cannot ask
+      # Docker for anything else. See backend/app/broker/ for the design.
+      - ${SANDBOX_BROKER_SOCKET:-/run/sentinelops-broker.sock}:/run/sentinelops-broker.sock
+    # The worker runs as an unprivileged user (see backend/Dockerfile), and the
+    # broker's socket is group-owned so only a member of BROKER_GID's group can
+    # open it — narrower than the old root-group grant this replaced, because
+    # the thing being shared is a five-image allowlist, not the real daemon.
     group_add:
-      - "0"
+      - "${BROKER_GID:-0}"
     environment:
       DATABASE_URL: postgresql+asyncpg://sentinelops:sentinelops@postgres:5432/sentinelops
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
       SANDBOX_ENABLED: "true"
+      SANDBOX_BROKER_SOCKET: /run/sentinelops-broker.sock
       # Needed here too, not just on backend: scan_tasks.py calls
       # get_github_app_auth() directly to mint an installation token for
       # cloning a private repository. Without these, a connected private
@@ -209,39 +208,6 @@ services:
       GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
       GITHUB_APP_PRIVATE_KEY_B64: ${GITHUB_APP_PRIVATE_KEY_B64:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
-      # The volume name, not a path. `docker run` from inside this container is
-      # served by the host daemon, so bind-mounting /data/repos/... would name a
-      # path the host does not have — the tool would scan nothing and report the
-      # repository clean. Mounting the same named volume gives the sibling the
-      # clone at the path it already has.
-      #
-      # The name the HOST daemon knows, which is not `worker_data`. Compose
-      # prefixes volume names with the project, and a `source=` naming a volume
-      # that does not exist is created empty rather than refused — so the tool
-      # would mount an empty directory instead of the clone. The volumes section
-      # pins the name explicitly so this string is correct no matter what the
-      # checkout directory is called.
-      SANDBOX_VOLUME: sentinelops_worker_data
-      # Same rule about the real name as above. Populated by the two warm
-      # services; the worker logs a warning at startup if it is missing, since
-      # the tools that need it will report errored until it exists.
-      SANDBOX_CACHE_VOLUME: sentinelops_sandbox_cache
-      # The worker's container ceiling, made explicit. The security scanner runs
-      # three tools at once and the deployment scanner runs two more (Hadolint,
-      # Checkov), and arq runs up to max_jobs scans at once — so without this
-      # the containers in flight are 5 x 5 = 25, more than a default Docker
-      # Desktop VM has room for.
-      #
-      # Six is well under even one scan's worth of tools, chosen after
-      # measuring rather than by halving the alarming number. Peaks are
-      # Semgrep 271 MiB, Gitleaks 58, Trivy 39, Checkov 156, Hadolint too fast
-      # to sample (a tiny static binary, comfortably under 50 MiB) — a limit
-      # is not a reservation, so six slots cost well under a gigabyte in
-      # practice. Scans past that queue for a slot, which is cheap: the three
-      # security tools cost ~34 container-seconds on a 2,500-file repository;
-      # Hadolint and Checkov measured under 1s and ~3s respectively against
-      # this project's own real Dockerfile and Terraform.
-      SANDBOX_MAX_CONCURRENT: "6"
     # No ports. The worker pulls jobs off Redis rather than accepting requests,
     # so it needs no inbound path at all — which is also why Cloud Run Worker
     # Pools exist rather than forcing this shape into a request/response service.

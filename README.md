@@ -27,9 +27,13 @@ scan, and what it *confirmed was fine*, not just what broke.
 
 ## Quick start (5 minutes)
 
-You need two things installed:
+You need:
 
-- **[Docker Desktop](https://www.docker.com/products/docker-desktop/)** — must be *running*, not just installed
+- **A real Linux setup with Docker** — on Windows, that means turning on
+  WSL2, installing Ubuntu inside it, and installing Docker there [the normal
+  way](https://docs.docker.com/engine/install/ubuntu/) — not Docker Desktop.
+  On Mac or Linux, whatever you already have. (Why not Docker Desktop: see
+  [Security](#security) below.)
 - **[Node.js 20 or newer](https://nodejs.org/)**
 
 ### 1. Get the code
@@ -39,7 +43,16 @@ git clone https://github.com/Aboiaboiaboi/sentinelops
 cd sentinelops
 ```
 
-### 2. Start the backend
+### 2. One-time setup
+
+```bash
+cd deploy/compose && ./provision-dev.sh && cd ../..
+```
+
+Sets up a small gatekeeper service that's the only thing allowed to run the
+scanning tools — see [Security](#security) for why.
+
+### 3. Start the backend
 
 ```bash
 docker compose up -d
@@ -66,7 +79,7 @@ curl localhost:8000/health
 You should see `{"status":"ok"}`. Prefer clicking to typing? Open
 <http://localhost:8000/docs> for the interactive API docs instead.
 
-### 3. Start the app
+### 4. Start the app
 
 ```bash
 cd frontend
@@ -74,7 +87,7 @@ npm install
 npm run dev
 ```
 
-### 4. Use it
+### 5. Use it
 
 Open **<http://localhost:5173>**, create an account (it's local — nothing
 leaves your machine), add a repository URL, and click **Run scan**.
@@ -91,8 +104,15 @@ docker compose down -v    # stop and delete the database and caches too
 <details>
 <summary><b>Something went wrong?</b></summary>
 
-**`docker compose up` fails immediately** — Docker Desktop probably isn't
-running. Start it and wait for the whale icon to stop animating.
+**`docker compose up` fails immediately** — Docker Engine probably isn't
+running. `sudo systemctl status docker` inside WSL2/Ubuntu; start it with
+`sudo systemctl start docker` if not.
+
+**Tool checks all report errored / scores read higher than expected** — the
+scan broker isn't reachable. Run `./deploy/compose/provision-dev.sh` (step 2
+above) if you haven't, or `systemctl status sentinelops-broker` if you have —
+see [`deploy/compose/README.md`](deploy/compose/README.md)'s troubleshooting
+section for the full decision tree.
 
 **Port already in use** — something else is on 8000, 5173, 5432 or 6379.
 Stop it, or change the port mapping in `docker-compose.yml`.
@@ -148,15 +168,14 @@ issue Checkov — one of the two newest checks — actually found in this
 project's own Terraform:
 
 > **Container granted host-level access** · HIGH · −2
-> `docker-compose.yml` mounts the Docker socket into a container, which is
-> effectively root on the host machine. The same is true of
-> `deploy/compose/docker-compose.observability.yml` and
-> `deploy/compose/docker-compose.prod.yml` — every file that grants it gets
-> named, not just whichever sorts first, so the dev-only case can't quietly
-> hide a deployed one. This is a real and necessary pattern here (it's how the
-> security scanners start their own sandboxed tool containers, and how
-> monitoring reads container stats) — the finding stays on the scoreboard so
-> it can never end up somewhere it shouldn't without someone noticing.
+> `deploy/compose/docker-compose.observability.yml` mounts the host's entire
+> root filesystem into node-exporter, read-only, so it can report disk
+> metrics. Neither `docker-compose.yml` nor `docker-compose.prod.yml` grants
+> this any more — a separate gatekeeper program handles running the scanning
+> tools now, instead of the worker having direct access (see
+> [Security](#security)) — but a host-metrics collector genuinely needs to
+> read the host's filesystem, so this one stays on the scoreboard rather than
+> being quietly excused.
 >
 > **Recommendation:** keep this out of anything deployed for real. If a
 > container genuinely needs it, grant only the specific permission it needs
@@ -434,6 +453,19 @@ filesystem access, every extra permission stripped, and a memory/CPU cap. If
 a scan needed to trust a sandbox, it can't
 — the sandbox refuses to run rather than run unsafely.
 
+The worker itself doesn't have the keys to Docker any more. A separate
+gatekeeper program is the only thing that does — the worker can only ask it
+to run one of five specific scanning tools, nothing else. If the worker were
+ever broken into, whoever got in would only get that same narrow request, not
+control of the machine.
+
+Setting this up also meant fixing a mismatch between development and
+production. Windows machines usually run Docker through an app called Docker
+Desktop, which sets things up slightly differently than a real Ubuntu server
+does — that difference caused a real bug earlier on. So development now runs
+on a real Linux setup too (see [Quick start](#quick-start-5-minutes)),
+matching the live server instead of almost matching it.
+
 On the account side: passwords are hashed with bcrypt, the login session is
 an `httpOnly` cookie (invisible to JavaScript, so it can't be stolen via a
 script-injection bug), login takes the same amount of time whether or not
@@ -490,6 +522,10 @@ variables, set by whatever infrastructure is running it.
       purely via Terraform was scored as having no deployment configuration
       at all. Category weights were also re-priced against what actually
       breaks a SaaS at real concurrency, not left at their original values
+- [x] **Removed the worker's Docker access** — a small gatekeeper program is
+      now the only thing that can run the scanning tools, and development
+      moved onto the same Linux setup the live server uses instead of a
+      close-but-not-quite match
 - [ ] **Load testing** — not yet done; how the app behaves under heavy
       concurrent scan traffic is still unverified
 
@@ -500,9 +536,10 @@ long-lived is ever saved.
 SentinelOps has been used to scan itself along the way, and it's caught real
 things worth admitting to: it once flagged its own missing CI setup (now
 fixed — see [.github/workflows/ci.yml](.github/workflows/ci.yml)), an
-outdated dependency (upgraded), and an oversized file (split up). The one
-finding still standing on purpose is the Docker socket mount described near
-the top of this page — that one's a deliberate trade-off, not an oversight.
+outdated dependency (upgraded), an oversized file (split up), and its own
+worker holding raw Docker access (fixed — see [Security](#security)). The one
+finding still standing on purpose is described near the top of this page —
+that one's a deliberate trade-off, not an oversight.
 
 ## Stack
 
@@ -554,8 +591,8 @@ Everything actually used, and a plain reason for each:
 
 | Tool | Version | Why |
 |---|---|---|
-| [Docker](https://www.docker.com/products/docker-desktop/) | any recent | Postgres, Redis, and the app itself |
-| [uv](https://docs.astral.sh/uv/) | 0.11+ | Python dependency management |
+| A real Linux environment (WSL2/Ubuntu on Windows) with [Docker Engine](https://docs.docker.com/engine/install/) | any recent | Postgres, Redis, the app itself, and the scan broker's systemd unit — not Docker Desktop, see [Quick start](#quick-start-5-minutes) |
+| [uv](https://docs.astral.sh/uv/) | 0.11+ | Python dependency management, and what runs the scan broker |
 | [Node.js](https://nodejs.org/) | 20+ | Frontend |
 | Python | 3.14 | Installed automatically by `uv` |
 
@@ -589,10 +626,13 @@ uv run python -m app.workers.main
 
 > **A worker running directly on your machine has no sandbox** unless you
 > turn it on, so the tool-backed security checks will honestly report
-> themselves as *errored* rather than fake a pass. To actually run them, set
-> `SANDBOX_ENABLED=true` (leave `SANDBOX_VOLUME` empty) and
-> `SANDBOX_CACHE_VOLUME=sentinelops_sandbox_cache`, after
-> `docker compose up warm-trivy warm-semgrep` has downloaded what they need.
+> themselves as *errored* rather than fake a pass. To actually run them, run
+> `./deploy/compose/provision-dev.sh` once (installs the scan broker as a
+> systemd service — see [Security](#security)), then set
+> `SANDBOX_ENABLED=true` and add yourself to the `sentinelops-broker` group
+> (`sudo usermod -aG sentinelops-broker "$(whoami)"`, then a fresh shell) so
+> this host-run process can open the broker's socket the same way the
+> containerised worker does.
 
 **Frontend:**
 

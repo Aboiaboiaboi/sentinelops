@@ -143,26 +143,22 @@ services:
     restart: unless-stopped
     volumes:
       - worker_data:/data
-      # Same trade the dev file documents at length: this grants root-on-host
-      # to anything that reaches the socket. It is what makes DockerSandbox
-      # portable across every cloud's VM, which is the whole point of this
-      # deployment path (11-phase5-handoff.md — milestone 3 dropped in favour
-      # of exactly this). Mitigated by the worker never being reachable from
-      # outside this VM: no published port, no public IP assigned to it
-      # directly.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # The scan broker's own socket, not the real Docker socket — the broker
+      # is a systemd unit on this host (deploy/compose/sentinelops-broker.service,
+      # installed by provision.sh), deliberately outside Compose, so this file
+      # never mounts /var/run/docker.sock at all. See backend/app/broker/ for
+      # the design; it replaces the "worker holds real root-on-host access"
+      # trade this line used to document.
+      - ${SANDBOX_BROKER_SOCKET:-/run/sentinelops-broker.sock}:/run/sentinelops-broker.sock
     group_add:
       # The worker runs unprivileged (USER app in backend/Dockerfile) and
-      # reaches the daemon through the mounted socket above, so it must be in
-      # the socket's group. That gid differs per host — root:root on Docker
-      # Desktop (0), root:docker on a Docker Engine install (the EC2 box, a
-      # non-root gid) — so it comes from .env. provision.sh and deploy.sh set
-      # DOCKER_GID with `stat -c '%g' /var/run/docker.sock`; the default of 0
-      # matches the old behaviour for anyone running compose by hand on Docker
-      # Desktop. Without the right value, verify() fails at startup and every
-      # tool check reports "the Docker daemon is not reachable" — which reads
+      # reaches the broker through the mounted socket above, so it must be in
+      # that socket's group — BROKER_GID, written to .env by provision.sh
+      # (a fixed, narrow `sentinelops-broker` group this project creates,
+      # not the host's real `docker` group). Without the right value the
+      # broker is unreachable and every tool check reports so — which reads
       # as a higher score, since errored checks cost nothing.
-      - "${DOCKER_GID:-0}"
+      - "${BROKER_GID:-0}"
     environment:
       ENVIRONMENT: production
       # Settings validates SECRET_KEY on every process that constructs it once
@@ -174,13 +170,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentinelops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sentinelops}
       REDIS_URL: redis://redis:6379/0
       SANDBOX_ENABLED: "true"
-      # Compose prefixes volume names with the project directory unless pinned
-      # — see the `name:` fields below. These strings must match those exactly,
-      # the same trap docker-compose.yml's comment documents: a name that does
-      # not match creates an empty volume instead of failing.
-      SANDBOX_VOLUME: sentinelops_prod_worker_data
-      SANDBOX_CACHE_VOLUME: sentinelops_prod_sandbox_cache
-      SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-6}
+      SANDBOX_BROKER_SOCKET: /run/sentinelops-broker.sock
       # Needed here too: app/workers/scan_tasks.py calls get_github_app_auth()
       # directly to mint an installation token when cloning a private
       # repository, so the worker process needs these just as much as the API
