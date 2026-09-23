@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
+import { useMagneticHover } from '@/hooks/useMagneticHover';
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
@@ -44,12 +45,47 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  (
+    { className, variant, size, asChild = false, onMouseMove, onMouseLeave, onMouseDown, onMouseUp, ...props },
+    forwardedRef,
+  ) => {
     const Comp = asChild ? Slot : 'button';
+    // Every button gets a small magnetic pull toward the cursor and a bouncy
+    // snap back — one shared feel rather than reimplementing it per page.
+    // Harmless on the size="icon" close buttons too: the effect is capped at
+    // a few pixels (see useMagneticHover), not something that needs opting
+    // out of case by case.
+    const magnetic = useMagneticHover<HTMLButtonElement>();
+
+    const setRefs = React.useCallback(
+      (node: HTMLButtonElement | null) => {
+        magnetic.ref.current = node;
+        if (typeof forwardedRef === 'function') forwardedRef(node);
+        else if (forwardedRef) (forwardedRef as React.MutableRefObject<HTMLButtonElement | null>).current = node;
+      },
+      [forwardedRef, magnetic.ref],
+    );
+
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}
-        ref={ref}
+        ref={setRefs}
+        onMouseMove={(event: React.MouseEvent<HTMLButtonElement>) => {
+          magnetic.onMouseMove(event);
+          onMouseMove?.(event);
+        }}
+        onMouseLeave={(event: React.MouseEvent<HTMLButtonElement>) => {
+          magnetic.onMouseLeave();
+          onMouseLeave?.(event);
+        }}
+        onMouseDown={(event: React.MouseEvent<HTMLButtonElement>) => {
+          magnetic.onMouseDown();
+          onMouseDown?.(event);
+        }}
+        onMouseUp={(event: React.MouseEvent<HTMLButtonElement>) => {
+          magnetic.onMouseUp();
+          onMouseUp?.(event);
+        }}
         {...props}
       />
     );

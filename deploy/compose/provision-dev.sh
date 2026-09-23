@@ -43,8 +43,10 @@ fi
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "Installing uv (the broker runs via 'uv run', same as this project's tests)."
-    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh
-    export PATH="$HOME/.local/bin:$PATH"
+    # /usr/local/bin, not the usual per-user ~/.local/bin: the broker starts as
+    # a systemd service, which does not see your shell's PATH — only a system
+    # location works. Matches provision.sh's prod install for the same reason.
+    curl -LsSf https://astral.sh/uv/install.sh | $SUDO env UV_INSTALL_DIR=/usr/local/bin sh
 fi
 
 echo "==> Preparing .env (repository root)"
