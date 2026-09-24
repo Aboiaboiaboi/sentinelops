@@ -134,7 +134,18 @@ class UnixHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 
 def serve(socket_path: str = DEFAULT_SOCKET_PATH, *, group: str = "") -> None:
     path = Path(socket_path)
-    if path.exists():
+    if path.is_dir():
+        # Docker Compose auto-creates a directory at a bind mount's source
+        # path when nothing exists there yet — if the worker container ever
+        # starts before this service has created the real socket (first boot,
+        # a reboot where compose comes up before systemd reaches this unit),
+        # that leaves a directory sitting where the socket belongs. unlink()
+        # only removes files, so this used to crash-loop forever
+        # (IsADirectoryError) without ever actually binding — found on the
+        # production box after it had been failing since the broker first
+        # shipped. rmdir requires empty; Docker never puts anything inside it.
+        path.rmdir()
+    elif path.exists():
         path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
 

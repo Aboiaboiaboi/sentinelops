@@ -526,6 +526,13 @@ variables, set by whatever infrastructure is running it.
       now the only thing that can run the scanning tools, and development
       moved onto the same Linux setup the live server uses instead of a
       close-but-not-quite match
+- [x] **Findable, shareable, and readable by more than just a browser** — a
+      real favicon and title, search-engine metadata (`robots.txt`,
+      `sitemap.xml`), a proper preview card when a link is shared in chat or
+      social apps, and the three public pages ship as real readable HTML
+      instead of an empty page that only fills in after JavaScript runs — so
+      a search engine, a link preview, or an AI agent all see the actual
+      content, not a blank shell
 - [ ] **Load testing** — not yet done; how the app behaves under heavy
       concurrent scan traffic is still unverified
 
@@ -646,6 +653,20 @@ The dev server forwards `/api` requests to the backend and strips that
 prefix off — this keeps the browser thinking it's talking to one single
 origin, which is why the auth cookie can be `httpOnly` (invisible to
 JavaScript, so it can't be stolen via an XSS bug) without breaking anything.
+
+`npm run build` does more than bundle: it also builds a Node-only SSR bundle
+of the three public marketing routes (`src/entry-prerender.tsx`, via
+`vite build --ssr`) and runs `scripts/prerender.mjs`, which renders each
+route with `react-dom/server` and writes the result to `dist/home/`,
+`dist/how-it-works/`, and `dist/who-its-for/` (plus the site root, which
+otherwise only redirects client-side). This is prerendering, not hydration —
+`main.tsx` still calls `createRoot().render()`, which replaces this markup
+with a normal client render on mount rather than reconciling against it. The
+point isn't faster first paint, it's that a crawler, an AI agent, or a chat
+app's link-unfurler that never runs JavaScript still sees the real page
+instead of `<div id="root"></div>`. If the OG banner or favicon SVGs change,
+regenerate their PNGs with `node scripts/generate-assets.mjs` (uses
+`@resvg/resvg-js`, a dev-only dependency — nothing new ships to the browser).
 
 ### Running the checks
 

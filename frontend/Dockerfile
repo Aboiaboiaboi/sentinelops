@@ -22,8 +22,14 @@ RUN npm ci
 # scanner considers a "full context copy" finding.
 COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json ./
 COPY src ./src
-# tsc -b && vite build — the same command `npm run build` runs locally, so a
-# build that fails here would have failed on a developer's machine too.
+COPY public ./public
+COPY scripts ./scripts
+# tsc -b && vite build && vite build --ssr && node scripts/prerender.mjs — the
+# same command `npm run build` runs locally, so a build that fails here would
+# have failed on a developer's machine too. The public/ and scripts/ copies
+# above are what make the last two steps possible: public/ holds the favicon,
+# OG image, and manifest that vite build copies into dist/ verbatim, and
+# scripts/ holds prerender.mjs and the SSR entry it runs against.
 RUN npm run build
 
 # ---------------------------------------------------------------------------

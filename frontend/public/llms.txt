@@ -1,0 +1,27 @@
+# SentinelOps
+
+> Automated production-readiness scanner. Point it at a repository; it clones
+> the code (read-only, never runs it), runs 33 checks across six categories —
+> Security, Reliability, Deployment, Architecture, Scalability, Observability
+> — and returns a score out of 100 with the exact finding behind every point
+> lost.
+
+SentinelOps never executes the scanned repository and makes no outbound
+network calls from the sandbox that inspects it. Every check evaluates to
+passed, flagged, skipped, or errored — never a bare pass/fail — and each
+finding names the file and the fix.
+
+## Pages
+
+- [Home](/home): what it does, the pitch, the score
+- [How it works](/how-it-works): the scan pipeline — clone, index, six
+  scanners, 33 checks, weighted score — and the sandbox's own constraints
+  (no network, read-only root, non-root user, hard memory/CPU caps)
+- [Who it's for](/who-its-for): fits a containerized backend service about to
+  go to production; does not fit static sites, libraries, notebooks, or a
+  monorepo of several services scored as one unit
+
+## Source
+
+- [GitHub](https://github.com/Aboiaboiaboi/sentinelops): full source, README,
+  and CHANGELOG

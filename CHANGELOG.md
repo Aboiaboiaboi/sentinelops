@@ -9,6 +9,49 @@ this file existed; the entries below cover the recent, meaningful ones —
 earlier history is in `git log` and the repository's own tags, not
 reconstructed here.
 
+## [0.81.0] — 2026-09-24
+
+### Added
+- **A real favicon, a proper chat/social preview card, and search-engine
+  metadata.** `frontend/public/favicon.svg` reuses the same shield-check mark
+  as the in-app logo; `og-image.png` (1200×630, generated from
+  `scripts/og-image.svg` via `scripts/generate-assets.mjs` and
+  `@resvg/resvg-js`, a dev-only dependency) is wired up as `og:image` /
+  `twitter:image` with `summary_large_image`, so a link pasted into Slack,
+  Discord, iMessage, or X renders a real card instead of a bare URL.
+  `robots.txt` and `sitemap.xml` cover the three public marketing routes
+  (`/home`, `/how-it-works`, `/who-its-for`) and explicitly keep the
+  authenticated routes out of both.
+- **The three public pages are prerendered to real, crawlable HTML at build
+  time.** Previously every route — public or not — was an empty
+  `<div id="root"></div>` until JavaScript ran, which most AI crawlers and
+  some link-unfurlers never do. `npm run build` now also builds an SSR-only
+  bundle of the marketing routes (`src/entry-prerender.tsx`) and runs
+  `scripts/prerender.mjs`, writing real rendered content to `dist/home/`,
+  `dist/how-it-works/`, `dist/who-its-for/`, and the site root. The
+  Caddyfile's `try_files` was updated (`{path}/index.html` added before the
+  SPA fallback) so these are served directly rather than falling through to
+  the empty client shell.
+- **`llms.txt`** at the site root, describing what SentinelOps is and does in
+  plain text for AI agents that check for it.
+
+### Fixed
+- **The scan broker had been crash-looping in production since it was first
+  deployed in v0.80.0** — every sandboxed tool check (Gitleaks, Trivy,
+  Semgrep, Hadolint, Checkov) had been silently reporting `errored` for 11
+  days, which reads as a *higher* score rather than a lower one, since an
+  errored check costs nothing. Root cause: `serve()`
+  (`backend/app/broker/server.py`) only knew how to `unlink()` a stale
+  socket *file* at startup; if the worker container ever started before the
+  broker created its socket — which it did, on first boot — Docker
+  auto-created a directory at that path to satisfy the bind mount instead,
+  and `unlink()` on a directory raises `IsADirectoryError`, so the broker's
+  systemd unit failed and restarted forever (found at 271 restarts) without
+  ever binding. `serve()` now clears a leftover directory the same as a
+  leftover file. Caught by actually reading a live scan's PDF report rather
+  than trusting a bare score — the score alone (98/100) looked like an
+  improvement.
+
 ## [0.80.0] — 2026-09-13
 
 ### Changed

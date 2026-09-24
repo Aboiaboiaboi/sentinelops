@@ -4,6 +4,7 @@
 # from package-lock.json regardless.
 node_modules/
 dist/
+dist-ssr/
 
 .env
 .env.*

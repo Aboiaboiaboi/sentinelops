@@ -57,9 +57,17 @@
 	# any path that is not a real static asset, which is what a client-side
 	# router (react-router-dom) needs — a deep link like /projects/abc must
 	# still resolve to the app shell, not a 404 from the file server.
+	#
+	# {path}/index.html is checked before that fallback so the three
+	# prerendered marketing routes (frontend/scripts/prerender.mjs writes
+	# /srv/home/index.html etc.) are served directly at their real path —
+	# not via a 301-to-trailing-slash directory redirect (which would work
+	# too, but changes the URL a crawler sees) and not via the SPA fallback
+	# (which would serve the empty client-only shell instead of the
+	# prerendered content those routes exist for in the first place).
 	handle {
 		root * /srv
-		try_files {path} /index.html
+		try_files {path} {path}/index.html /index.html
 		file_server
 		encode gzip
 	}

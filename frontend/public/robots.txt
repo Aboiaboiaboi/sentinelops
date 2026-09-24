@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /home
+Allow: /how-it-works
+Allow: /who-its-for
+Disallow: /dashboard
+Disallow: /projects/
+Disallow: /scans/
+Disallow: /login
+Disallow: /signup
+
+Sitemap: https://13-206-43-42.sslip.io/sitemap.xml

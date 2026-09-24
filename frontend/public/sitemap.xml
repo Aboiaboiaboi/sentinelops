@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://13-206-43-42.sslip.io/home</loc>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://13-206-43-42.sslip.io/how-it-works</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://13-206-43-42.sslip.io/who-its-for</loc>
+    <priority>0.8</priority>
+  </url>
+</urlset>
