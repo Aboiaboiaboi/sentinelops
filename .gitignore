@@ -67,6 +67,12 @@ deploy/gcp/.terraform/
 # stays out of git for the same reason.
 *.tfstate
 *.tfstate.*
+# A saved `terraform plan -out=` file — a snapshot of the account's actual
+# infrastructure at the moment it was written (ARNs, security group rules,
+# resource IDs), regenerated on demand and never meant to be reviewed as a
+# diff. Same reasoning as state, one step removed.
+tfplan
+*.tfplan
 # Names one particular deployment, and backend.hcl points at its state bucket.
 deploy/gcp/terraform.tfvars
 deploy/gcp/backend.hcl

@@ -9,7 +9,7 @@ this file existed; the entries below cover the recent, meaningful ones —
 earlier history is in `git log` and the repository's own tags, not
 reconstructed here.
 
-## [0.81.0] — 2026-09-24
+## [0.81.1] — 2026-09-24
 
 ### Added
 - **A real favicon, a proper chat/social preview card, and search-engine
