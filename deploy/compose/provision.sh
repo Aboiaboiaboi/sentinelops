@@ -76,17 +76,11 @@ else
 fi
 echo "Recorded BROKER_GID=${BROKER_GID} for the worker."
 
-# REPO_ROOT is two directories up from here (deploy/compose/../..). Templated
-# into the unit rather than assumed, so this works from whatever path the
-# repository happens to be checked out at.
-REPO_ROOT="$(cd ../.. && pwd)"
-sed \
-    -e "s#__REPO_ROOT__#${REPO_ROOT}#g" \
-    -e "s#__SANDBOX_VOLUME__#sentinelops_prod_worker_data#g" \
-    -e "s#__SANDBOX_CACHE_VOLUME__#sentinelops_prod_sandbox_cache#g" \
-    -e "s/__DEPLOY_USER__/$(whoami)/g" \
-    sentinelops-broker.service | $SUDO tee /etc/systemd/system/sentinelops-broker.service >/dev/null
-$SUDO systemctl daemon-reload
+# Templated into the unit (REPO_ROOT, the deploy user, the volume names)
+# rather than assumed, so this works from whatever path the repository
+# happens to be checked out at — shared with deploy.sh so the two scripts
+# can't drift on how they fill in the same template.
+./install-broker-unit.sh
 $SUDO systemctl enable --now sentinelops-broker
 echo "Scan broker installed and started (systemctl status sentinelops-broker)."
 

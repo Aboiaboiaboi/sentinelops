@@ -39,11 +39,18 @@ $COMPOSE build
 
 echo "==> Restarting the scan broker"
 # The broker (backend/app/broker/, installed by provision.sh as a systemd
-# unit — never a compose service) lives in this same checkout, so it needs
-# picking up on every deploy the same as the containers do. If a box was
-# provisioned before the broker existed, this restart is a no-op the unit
-# file itself doesn't exist yet for; provision.sh is still required once.
+# unit — never a compose service) lives in this same checkout, so its unit
+# file is *reinstalled* here too, not just restarted — a plain restart would
+# reload the same unit content already on disk, silently ignoring any change
+# this deploy makes to sentinelops-broker.service (a new Environment= value,
+# say) until someone remembers to re-run provision.sh by hand. That gap is
+# exactly what turned one socket-path fix into a multi-step production
+# debugging session the first time it happened. If a box was provisioned
+# before the broker existed at all, this is still a no-op — the group and
+# BROKER_GID provision.sh creates aren't touched here; provision.sh is still
+# required once.
 if systemctl list-unit-files sentinelops-broker.service >/dev/null 2>&1; then
+    ./install-broker-unit.sh
     sudo systemctl restart sentinelops-broker
 else
     echo "sentinelops-broker.service is not installed — run provision.sh once first."

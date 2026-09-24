@@ -64,6 +64,14 @@ reconstructed here.
   is visible to the mount immediately — no container recreation required, and
   the same directory-vs-file problem from the first fix can no longer occur
   either, since Docker only ever sees a real, already-existing directory.
+- **`deploy.sh` now reinstalls the broker's systemd unit on every deploy,
+  not just `provision.sh`.** Rolling out the two fixes above required a
+  manual `provision.sh` re-run before `deploy.sh` picked them up, because
+  `deploy.sh` only ever restarted the broker — reloading whatever unit file
+  already happened to be on disk, silently ignoring any change this deploy
+  made to `sentinelops-broker.service` itself. The substitution logic moved
+  into a new shared `deploy/compose/install-broker-unit.sh`, called by both
+  scripts, so they can't drift on how they fill in the same template again.
 
 ## [0.80.0] — 2026-09-13
 
