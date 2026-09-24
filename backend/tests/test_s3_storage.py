@@ -1,15 +1,19 @@
 """Tests for the S3 backend.
 
 Split from test_utils.py because these need a server, the same arrangement as
-test_gcs_storage.py. They run against **MinIO**, a real implementation of the
-S3 API, not against a mock of boto3 — a mock would assert that this code calls
-the methods this code calls, which is the shape of test that passes while the
-feature is broken.
+test_gcs_storage.py. They run against **S3Mock**, a real implementation of the
+S3 HTTP API, not against a mock of boto3 — a mock would assert that this code
+calls the methods this code calls, which is the shape of test that passes
+while the feature is broken.
 
 Start the server with:
 
-    docker run --rm -p 9000:9000 -e MINIO_ROOT_USER=minioadmin \
-        -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+    docker run --rm -p 9090:9090 adobe/s3mock
+
+No credentials needed — S3Mock accepts any. (Previously MinIO; MinIO pulled
+`minio/minio` from anonymous access on both Docker Hub and quay.io, for every
+tag, not just `:latest` — a distribution change on their end, not something
+this project's setup got wrong.)
 
 Without it every test here skips, so the suite stays runnable with no Docker —
 the same arrangement as the sandbox integration test.
@@ -28,13 +32,13 @@ from app.utils.storage import Storage, UnsafeStorageKey
 # `uv sync --all-groups` installs it, which is what CI does.
 pytest.importorskip("boto3", reason="the s3 dependency group is not installed")
 
-ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "http://localhost:9000")
+ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "http://localhost:9090")
 
-# MinIO's own defaults, used only against the local/CI emulator above — never
-# credentials for a real account. Set before any client is built, the same
-# ordering test_gcs_storage.py uses for STORAGE_EMULATOR_HOST.
-os.environ.setdefault("AWS_ACCESS_KEY_ID", "minioadmin")
-os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "minioadmin")
+# Dummy values — S3Mock does not validate credentials at all, but boto3
+# still refuses to build a client with none configured. Set before any client
+# is built, the same ordering test_gcs_storage.py uses for STORAGE_EMULATOR_HOST.
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "s3mock")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "s3mock")
 
 
 def _emulator_is_up() -> bool:

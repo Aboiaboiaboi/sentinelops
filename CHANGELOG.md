@@ -9,6 +9,20 @@ this file existed; the entries below cover the recent, meaningful ones —
 earlier history is in `git log` and the repository's own tags, not
 reconstructed here.
 
+## [0.81.2] — 2026-09-24
+
+### Fixed
+- **CI's S3 emulator step was pulling `minio/minio`, which MinIO has pulled
+  from anonymous access on both Docker Hub and quay.io** — every tag, not
+  just `:latest` (confirmed directly against both registries' anonymous
+  token endpoints, both now 401 unconditionally). Nothing in this project
+  changed; MinIO changed how they distribute their image. Switched the
+  "Start the S3 emulator" step (and `test_s3_storage.py`'s own docstring) to
+  [S3Mock](https://github.com/adobe/S3Mock) (`adobe/s3mock`), which still
+  pulls anonymously, needs no credentials, and implements the same real S3
+  HTTP API the tests were written to exercise (not a mock of boto3's own
+  methods).
+
 ## [0.81.1] — 2026-09-24
 
 ### Added

@@ -140,20 +140,23 @@ jobs:
           exit 1
 
       - name: Start the S3 emulator
-        # MinIO implements the real S3 API, so the storage tests exercise
-        # boto3 rather than a mock of it — the same reasoning as fake-gcs-server
-        # above, and it is also what the same S3Storage class talks to on R2,
-        # Spaces or real AWS.
+        # S3Mock implements the real S3 HTTP API (boto3 talks to it exactly as
+        # it would talk to R2, Spaces or real AWS), not a mock of boto3's own
+        # methods — the same reasoning fake-gcs-server above gets, and the
+        # same as MinIO, which this step used until MinIO pulled `minio/minio`
+        # from anonymous access on both Docker Hub and quay.io (confirmed:
+        # both now 401 even an anonymous pull token, for every tag, not just
+        # `:latest` — a distribution change on their end, nothing in this
+        # project's own code). S3Mock needs no credentials and no bucket
+        # pre-creation; the tests create their own bucket per run either way.
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio server /data
+          docker run -d --name s3mock -p 9090:9090 adobe/s3mock
           for _ in $(seq 1 20); do
-            curl -sf http://localhost:9000/minio/health/live >/dev/null && exit 0
+            curl -sf http://localhost:9090/favicon.ico >/dev/null && exit 0
             sleep 0.5
           done
           echo "the emulator never came up" >&2
-          docker logs minio >&2
+          docker logs s3mock >&2
           exit 1
 
       - name: Lint
