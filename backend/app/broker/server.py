@@ -29,7 +29,7 @@ from app.utils.sandbox import DockerSandbox, SandboxRunner, SandboxUnavailable
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SOCKET_PATH = "/run/sentinelops-broker.sock"
+DEFAULT_SOCKET_PATH = "/run/sentinelops-broker/broker.sock"
 
 
 def sandbox_from_environment() -> DockerSandbox:
@@ -133,17 +133,22 @@ class UnixHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 
 
 def serve(socket_path: str = DEFAULT_SOCKET_PATH, *, group: str = "") -> None:
+    # socket_path lives inside its own directory (/run/sentinelops-broker/),
+    # never bare in /run/ — docker-compose.yml and docker-compose.prod.yml
+    # bind-mount that whole directory into the worker, not this one file.
+    # Mounting a single file is fragile in two ways, both hit in production
+    # before this: (1) if the worker container starts before this file
+    # exists, Docker auto-creates a directory there to satisfy the mount,
+    # and unlink() can't remove a directory — the broker crash-looped
+    # forever (IsADirectoryError) without ever binding; (2) every restart
+    # here unlinks and recreates the socket as a new inode, but a container
+    # whose bind mount already pinned the old file keeps pointing at a dead
+    # one — connect() gets ECONNREFUSED even though the broker is healthy.
+    # A directory mount doesn't have either problem: Docker never invents a
+    # phantom directory in place of a real one, and a live directory bind
+    # mount shows a replaced file inside it immediately, no restart needed.
     path = Path(socket_path)
     if path.is_dir():
-        # Docker Compose auto-creates a directory at a bind mount's source
-        # path when nothing exists there yet — if the worker container ever
-        # starts before this service has created the real socket (first boot,
-        # a reboot where compose comes up before systemd reaches this unit),
-        # that leaves a directory sitting where the socket belongs. unlink()
-        # only removes files, so this used to crash-loop forever
-        # (IsADirectoryError) without ever actually binding — found on the
-        # production box after it had been failing since the broker first
-        # shipped. rmdir requires empty; Docker never puts anything inside it.
         path.rmdir()
     elif path.exists():
         path.unlink()

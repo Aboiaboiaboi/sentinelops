@@ -51,6 +51,19 @@ reconstructed here.
   leftover file. Caught by actually reading a live scan's PDF report rather
   than trusting a bare score — the score alone (98/100) looked like an
   improvement.
+- **The broker's socket is bind-mounted as a directory now, not a single
+  file** (`SANDBOX_BROKER_DIR=/run/sentinelops-broker`, holding
+  `broker.sock`). Deploying the directory-unlink fix above exposed a second,
+  deeper problem the moment the broker was actually reachable again: mounting
+  a lone socket *file* into the worker only works until the broker restarts —
+  `serve()` unlinks and recreates the socket on every start, which is a new
+  inode, but a container whose bind mount already resolved the old file keeps
+  pointing at it, so `connect()` gets `ECONNREFUSED` even though the broker
+  is healthy. This is exactly what happened on the very next deploy. Bind-
+  mounting the containing directory instead means a file replaced inside it
+  is visible to the mount immediately — no container recreation required, and
+  the same directory-vs-file problem from the first fix can no longer occur
+  either, since Docker only ever sees a real, already-existing directory.
 
 ## [0.80.0] — 2026-09-13
 

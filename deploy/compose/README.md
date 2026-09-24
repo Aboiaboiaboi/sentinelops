@@ -174,7 +174,7 @@ each check names the cause. Work down this list on the instance:
 
 3. **The worker can open the broker's socket:**
    ```bash
-   docker compose -f docker-compose.prod.yml exec worker ls -l /run/sentinelops-broker.sock
+   docker compose -f docker-compose.prod.yml exec worker ls -l /run/sentinelops-broker/broker.sock
    docker compose -f docker-compose.prod.yml exec worker id
    ```
    `Permission denied` means the worker isn't in the socket's group. Compare
@@ -182,6 +182,14 @@ each check names the cause. Work down this list on the instance:
    `.env` has no `BROKER_GID` at all), re-run `./provision.sh`, which recreates
    the `sentinelops-broker` group and writes its real gid, then
    `docker compose -f docker-compose.prod.yml --env-file .env up -d --force-recreate worker`.
+
+   `Connection refused` (socket visible, but nothing answers) almost always
+   means the broker restarted *after* this worker container was created. The
+   whole `/run/sentinelops-broker/` directory is bind-mounted rather than the
+   socket file alone specifically so this shouldn't happen — but if you ever
+   see it, `docker compose -f docker-compose.prod.yml --env-file .env up -d
+   --force-recreate worker` after confirming `systemctl status
+   sentinelops-broker` is `active (running)` will fix it.
 
 4. **The broker itself can reach Docker.** It runs as a plain host process, in
    the host's real `docker` group — `sudo -u <deploy-user> docker version`

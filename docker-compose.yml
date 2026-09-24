@@ -179,14 +179,22 @@ services:
     restart: unless-stopped
     volumes:
       - worker_data:/data
-      # The scan broker's own socket — not the real Docker socket. The broker
-      # is a plain host process started by systemd (see
-      # deploy/compose/sentinelops-broker.service and
+      # The directory holding the scan broker's own socket — not the real
+      # Docker socket. The broker is a plain host process started by systemd
+      # (see deploy/compose/sentinelops-broker.service and
       # deploy/compose/provision-dev.sh), never a Compose service, specifically
       # so this file never has to mount /var/run/docker.sock again. The worker
       # can ask the broker to run one of five fixed tool images; it cannot ask
       # Docker for anything else. See backend/app/broker/ for the design.
-      - ${SANDBOX_BROKER_SOCKET:-/run/sentinelops-broker.sock}:/run/sentinelops-broker.sock
+      #
+      # The whole directory is mounted, not the socket file by itself —
+      # mounting a single file breaks the moment the broker restarts (it
+      # unlinks and recreates the socket, a new inode a container's existing
+      # bind mount doesn't follow) and can end up as a phantom directory if
+      # the worker ever starts first. A directory bind mount has neither
+      # problem: replacing a file inside it is visible immediately. Found the
+      # hard way in production — see backend/app/broker/server.py's serve().
+      - ${SANDBOX_BROKER_DIR:-/run/sentinelops-broker}:${SANDBOX_BROKER_DIR:-/run/sentinelops-broker}
     # The worker runs as an unprivileged user (see backend/Dockerfile), and the
     # broker's socket is group-owned so only a member of BROKER_GID's group can
     # open it — narrower than the old root-group grant this replaced, because
@@ -198,7 +206,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
       SANDBOX_ENABLED: "true"
-      SANDBOX_BROKER_SOCKET: /run/sentinelops-broker.sock
+      SANDBOX_BROKER_SOCKET: /run/sentinelops-broker/broker.sock
       # Needed here too, not just on backend: scan_tasks.py calls
       # get_github_app_auth() directly to mint an installation token for
       # cloning a private repository. Without these, a connected private

@@ -36,7 +36,7 @@ Environment=SANDBOX_CACHE_VOLUME=__SANDBOX_CACHE_VOLUME__
 Environment=SANDBOX_TIMEOUT_SECONDS=300
 Environment=SANDBOX_MEMORY_MB=512
 Environment=SANDBOX_MAX_CONCURRENT=6
-Environment=SANDBOX_BROKER_SOCKET=/run/sentinelops-broker.sock
+Environment=SANDBOX_BROKER_SOCKET=/run/sentinelops-broker/broker.sock
 Environment=SENTINELOPS_BROKER_GROUP=sentinelops-broker
 
 [Install]

@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # and the concurrency limit all used to live here and are now the broker's
     # own concern, configured on the host where it runs — this worker no
     # longer needs to know any of them.
-    sandbox_broker_socket: str = "/run/sentinelops-broker.sock"
+    sandbox_broker_socket: str = "/run/sentinelops-broker/broker.sock"
 
     # Only consulted when the browser talks to the API cross-origin. Local dev
     # goes through the frontend's /api proxy, which is same-origin, so CORS never

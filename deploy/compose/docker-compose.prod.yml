@@ -143,13 +143,22 @@ services:
     restart: unless-stopped
     volumes:
       - worker_data:/data
-      # The scan broker's own socket, not the real Docker socket — the broker
-      # is a systemd unit on this host (deploy/compose/sentinelops-broker.service,
-      # installed by provision.sh), deliberately outside Compose, so this file
-      # never mounts /var/run/docker.sock at all. See backend/app/broker/ for
+      # The directory holding the scan broker's own socket, not the real
+      # Docker socket — the broker is a systemd unit on this host
+      # (deploy/compose/sentinelops-broker.service, installed by
+      # provision.sh), deliberately outside Compose, so this file never
+      # mounts /var/run/docker.sock at all. See backend/app/broker/ for
       # the design; it replaces the "worker holds real root-on-host access"
       # trade this line used to document.
-      - ${SANDBOX_BROKER_SOCKET:-/run/sentinelops-broker.sock}:/run/sentinelops-broker.sock
+      #
+      # The whole directory, not the socket file alone — mounting a single
+      # file breaks every time the broker restarts (it unlinks and
+      # recreates the socket, and an already-running container's bind mount
+      # keeps pointing at the old, now-dead inode) and can be replaced by a
+      # phantom directory if the worker ever starts before the broker has
+      # created the file at all. Both hit production before this was fixed
+      # — see backend/app/broker/server.py's serve().
+      - ${SANDBOX_BROKER_DIR:-/run/sentinelops-broker}:${SANDBOX_BROKER_DIR:-/run/sentinelops-broker}
     group_add:
       # The worker runs unprivileged (USER app in backend/Dockerfile) and
       # reaches the broker through the mounted socket above, so it must be in
@@ -170,7 +179,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentinelops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sentinelops}
       REDIS_URL: redis://redis:6379/0
       SANDBOX_ENABLED: "true"
-      SANDBOX_BROKER_SOCKET: /run/sentinelops-broker.sock
+      SANDBOX_BROKER_SOCKET: /run/sentinelops-broker/broker.sock
       # Needed here too: app/workers/scan_tasks.py calls get_github_app_auth()
       # directly to mint an installation token when cloning a private
       # repository, so the worker process needs these just as much as the API

@@ -151,5 +151,16 @@ def test_the_worker_mounts_the_brokers_socket_instead() -> None:
     before_worker, separator, after_worker_start = services.partition("\n  worker:\n")
 
     assert separator, "the worker service was renamed; this test needs updating"
-    assert "sentinelops-broker.sock" not in before_worker
-    assert "sentinelops-broker.sock" in after_worker_start
+    assert "sentinelops-broker" not in before_worker
+    assert "sentinelops-broker" in after_worker_start
+    # The directory is bind-mounted, not the socket file alone — see
+    # server.py's serve() for why mounting a single file is fragile across a
+    # broker restart. The mount line has no ".sock" in it; only the
+    # SANDBOX_BROKER_SOCKET env var (the in-container path the app connects
+    # to) does.
+    mount_line = next(
+        line
+        for line in after_worker_start.splitlines()
+        if "SANDBOX_BROKER_DIR" in line and ":" in line
+    )
+    assert ".sock" not in mount_line
